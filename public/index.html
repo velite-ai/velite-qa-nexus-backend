@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Velite Group | Unified Quality & Production Nexus</title>
+  <link rel="icon" type="image/png" href="assets/velite-logo.png">
+  <link rel="stylesheet" href="style.css">
+  <!-- ★ Backend adapter — MUST load first. Fakes the Google Drive OAuth surface
+       and reroutes all Drive API calls through this server. Handles device
+       approval + OTP flow. Loads BEFORE any other script. -->
+  <script src="backend-adapter.js"></script>
+  <!-- The old Google Sign-In script is no longer needed (backend-adapter fakes it),
+       but we keep it commented to make the previous integration visible for the audit trail:
+       <script src="https://accounts.google.com/gsi/client" async defer></script> -->
+</head>
+<body class="pharma-theme locked-view" id="app-body">
+  <!-- Mobile sidebar overlay -->
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeMobileSidebar()"></div>
+
+  <!-- --- GMAIL LOGIN SIMULATOR OVERLAY --- -->
+  <div class="login-overlay active" id="login-screen">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo-chip">
+          <img src="assets/velite-logo-cropped.png" alt="Velite" class="login-logo-img">
+        </div>
+        <p>Unified Quality &amp; Production Nexus</p>
+      </div>
+
+      <div class="login-body" id="login-init-view">
+        <p class="login-welcome-text">Select your corporate gateway identity to authenticate via Google Account.</p>
+        <button class="btn-google-login" id="btn-google-sign-in">
+          <svg class="google-icon" width="18" height="18" viewBox="0 0 24 24">
+            <path fill="#EA4335" d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.137 4.114-3.466 0-6.277-2.85-6.277-6.36s2.81-6.36 6.277-6.36c1.558 0 2.973.567 4.07 1.5l3.056-3.057C19.243 2.54 15.962 1 12.24 1 5.766 1 .5 6.266.5 12.75S5.766 24.5 12.24 24.5c6.518 0 11.26-4.6 11.26-11.45 0-.7-.072-1.3-.198-1.765H12.24z"/>
+          </svg>
+          Sign in with Google Account
+        </button>
+        <div class="login-footer-info">Secure FDA 21 CFR Part 11 compliant OAuth Portal</div>
+      </div>
+
+      <!-- Gmail Account Selector View (Populated after button click) -->
+      <div class="login-body" id="login-accounts-view" style="display: none;">
+        <h3 class="selector-title">Choose an account</h3>
+        <p class="selector-subtitle">to continue to Velite Unified Nexus</p>
+        
+        <div class="google-accounts-list" id="google-accounts-container">
+          <!-- Populated dynamically via JS -->
+        </div>
+
+        <button class="btn-secondary" id="btn-login-back" style="width: 100%; margin-top: 16px;">Back</button>
+      </div>
+
+      <!-- Authentication loading view -->
+      <div class="login-body" id="login-loading-view" style="display: none; text-align: center; padding: 30px 0;">
+        <div class="google-spinner"></div>
+        <h3 style="margin-top: 20px; color: #fff;">Verifying Credentials...</h3>
+        <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 8px;">Establishing 21 CFR Part 11 encrypted session</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- --- SIDEBAR NAVIGATION --- -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo-chip">
+        <img src="assets/velite-logo-cropped.png" alt="Velite" class="brand-logo-img" id="brand-logo-id">
+      </div>
+      <span class="brand-subtitle" id="brand-sub">Pharmaceuticals</span>
+    </div>
+
+    <!-- Active User Profile Display -->
+    <div class="active-user-badge" id="active-user-badge">
+      <div class="avatar" id="nav-user-avatar">SV</div>
+      <div class="info">
+        <h4 id="nav-user-name">Sanjiv Kumar Verma</h4>
+        <span id="nav-user-role">CEO, Velite Group</span>
+      </div>
+    </div>
+
+    <!-- Dynamic Department-wise Nav Menu -->
+    <ul class="nav-links" id="sidebar-nav-links">
+      
+      <!-- CORE OVERVIEW -->
+      <li class="nav-item active" data-tab="dashboard">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          Dashboard Overview
+        </a>
+      </li>
+
+      <!-- PRODUCTION ONLY MODULES -->
+      <li class="nav-item production-only" data-tab="production-active" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+          Batch Compounding CPP
+        </a>
+      </li>
+      <li class="nav-item production-only" data-tab="production-clearance" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><polyline points="9 11 12 14 22 4"></polyline></svg>
+          Line Clearance Board
+        </a>
+      </li>
+
+      <!-- QC ONLY MODULES -->
+      <li class="nav-item qc-only" data-tab="qc-testing" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          Batch Laboratory Tests
+        </a>
+      </li>
+
+      <!-- QA ONLY MODULES -->
+      <li class="nav-item qa-only" data-tab="deviations">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          Deviations & CAPA
+        </a>
+      </li>
+      <li class="nav-item qa-only pharma-only" data-tab="bmrs">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" height="18" width="18" y="3" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+          Electronic BMR Release
+        </a>
+      </li>
+      <li class="nav-item qa-only" data-tab="qa-ai-training">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+          AI Training Center
+        </a>
+      </li>
+
+      <!-- COSMETIC ONLY MODULES (SHARED BETWEEN QC & QA) -->
+      <li class="nav-item cosmetic-only" data-tab="sensory" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
+          Sensory QC & CoA
+        </a>
+      </li>
+      <li class="nav-item cosmetic-only" data-tab="stability" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          Stability Chambers
+        </a>
+      </li>
+      <li class="nav-item cosmetic-only" data-tab="ingredients" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+          Allergen & Ingredient Check
+        </a>
+      </li>
+      <li class="nav-item cosmetic-only" data-tab="iso17" style="display: none;">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          ISO 22716 Matrix
+        </a>
+      </li>
+
+      <!-- GLOBAL VIEWS -->
+      <li class="nav-item" data-tab="documents">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          Document Vault
+        </a>
+      </li>
+      <li class="nav-item" data-tab="audit">
+        <a>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          Compliance Audit Log
+        </a>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <button class="cloud-sync-badge no-cfg" id="cloud-sync-badge" onclick="configureCloudSync()">☁ Cloud Sync</button>
+      <button class="btn-logout" id="btn-logout-nexus">Sign Out Account</button>
+    </div>
+  </aside>
+
+  <!-- --- MAIN SCREEN AREA --- -->
+  <main class="main-content">
+
+    <!-- Drive Sync Reconnect Banner — auto-shown when Cloud Sync is configured but no active token -->
+    <div id="drive-reconnect-banner" style="display:none; background: linear-gradient(90deg, rgba(245,158,11,0.18), rgba(239,68,68,0.18)); border: 1px solid rgba(245,158,11,0.5); padding: 10px 14px; border-radius: 8px; margin-bottom: 10px; display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap: wrap;">
+      <div style="display:flex; align-items:center; gap:10px; color: #fbbf24;">
+        <span style="font-size: 1.1rem;">⚠</span>
+        <span><strong>Cloud Sync is paused.</strong> New SOPs from other QA Managers won't appear until you reconnect.</span>
+      </div>
+      <button onclick="connectGoogleDrive()" style="background: #fbbf24; color: #1a1a1a; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap;">Reconnect Drive</button>
+    </div>
+
+    <!-- Top Bar with Global Switcher & Hat Switcher -->
+    <header class="header-bar">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="mobile-menu-btn" id="btn-mobile-menu" onclick="toggleMobileSidebar()">☰</button>
+      <div class="page-title">
+          <h2 id="view-title">Dashboard Overview</h2>
+          <span id="division-status-sub">Velite Group Quality Operations</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 16px;">
+        
+        <!-- --- FLEXIBLE SMALL-SCALE HAT SWITCHER --- -->
+        <div class="hat-switcher-container" id="hat-switcher-div" style="display: none;">
+          <div class="solo-mode-badge" title="Allows switching roles on a unified floor. Toggling triggers security exception logs.">
+            <span class="pulse-dot"></span> Shared Hats
+          </div>
+          <select class="hat-select" id="operator-hat-select" onchange="switchOperatorHat()">
+            <option value="Production">Hat: Production</option>
+            <option value="QC">Hat: QC Testing</option>
+            <option value="QA">Hat: QA Oversight</option>
+            <option value="CEO">Hat: Executive CEO</option>
+          </select>
+        </div>
+
+        <div class="toggle-container" id="division-toggle">
+          <div class="toggle-option active active-pharma" id="toggle-pharma" data-div="pharma">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.25-2.5 3-2.5 4.5h20c0-1.5-1-3.25-2.5-4.5S14 12 12 12s-6 3.25-7.5 4.5z"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            Velite Pharmaceuticals
+          </div>
+          <div class="toggle-option" id="toggle-cosmetic" data-div="cosmetics">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.5 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"></path></svg>
+            Velite Healthcare
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Global Dynamic Counters (KPIs) -->
+    <section class="kpi-grid" id="kpi-grid-area">
+      <!-- Generated Dynamically by JS -->
+    </section>
+
+    <!-- --- MODULE VIEWPORTS --- -->
+
+    <!-- 1. DASHBOARD VIEWPORT -->
+    <div class="viewport-panel active" id="vp-dashboard">
+      <div class="two-col-grid">
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>System Quality Health</h3>
+              <p>Current snapshot of document renewals, compliance and activities.</p>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 220px; position: relative;">
+            <svg width="200" height="200" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="40" stroke="rgba(255, 255, 255, 0.05)" stroke-width="8" fill="none" />
+              <circle id="gauge-circle" cx="50" cy="50" r="40" stroke="var(--accent-color)" stroke-width="8" fill="none" stroke-dasharray="251.2" stroke-dashoffset="35" stroke-linecap="round" style="transition: stroke-dashoffset 1s ease; transform: rotate(-90deg); transform-origin: 50% 50%;" />
+            </svg>
+            <div style="position: absolute; text-align: center; top: 40%;">
+              <h1 id="gauge-pct" style="font-size: 2.2rem; font-weight: 800; color: #fff;">86%</h1>
+              <p style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Compliance Rating</p>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: center; border-top: 1px solid var(--glass-border); padding-top: 12px;">
+            <div>
+              <p style="font-size: 0.75rem; color: var(--text-muted);">Active Procedures</p>
+              <h4 id="dash-active-docs" style="font-size: 1.1rem; color: #fff; margin-top: 2px;">4 / 6</h4>
+            </div>
+            <div>
+              <p style="font-size: 0.75rem; color: var(--text-muted);">Open Tasks</p>
+              <h4 id="dash-open-tasks" style="font-size: 1.1rem; color: #fff; margin-top: 2px;">2 Pending</h4>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Urgent Quality Actions</h3>
+              <p>Critical tasks requiring immediate feedback</p>
+            </div>
+          </div>
+          <div class="table-wrapper" style="border: none;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th>Date Logged</th>
+                  <th>Urgency</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-renewal-table">
+                <!-- Seeded Dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Live Audit Timeline Snapshot -->
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Recent QA Operations Activity</h3>
+            <p>Real-time audit log of active processes</p>
+          </div>
+          <button class="btn-secondary" onclick="switchTab('audit')">View Full Audit Log</button>
+        </div>
+        <div class="audit-timeline" id="dash-audit-timeline">
+          <!-- Seeded Dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. DOCUMENT VAULT VIEWPORT -->
+    <div class="viewport-panel" id="vp-documents">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Standard Operating Procedures & Records</h3>
+            <p>Flexible document repository. Modify versions, edit metadata, and extend renewals freely.</p>
+          </div>
+          <div class="card-actions">
+            <div class="search-wrapper">
+              <svg class="search-icon-inside" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" class="search-input" id="search-docs" placeholder="Search SOPs/Documents..." oninput="renderDocumentVault()">
+            </div>
+            <button class="btn-secondary qa-only-btn" id="btn-bulk-tag" onclick="bulkSetDocumentDivision()" title="Bulk-assign the Applicable Division for many documents at once (Executive tool — for one-time migration of legacy untagged docs)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
+              Bulk-tag Division
+            </button>
+            <button class="btn-secondary qa-only-btn" id="btn-recently-deleted" onclick="openRecentlyDeleted()" title="View documents deleted in the last 30 days — restore from Google Drive trash">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>
+              Recently Deleted
+            </button>
+            <button class="btn-secondary" id="btn-sync-docs" onclick="(async()=>{await pullFromDriveBackup({force:true,notify:false}); await syncDocsWithDriveMeta({notify:true});})()" title="Pull latest documents from Google Drive (multi-user sync + orphan recovery)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path></svg>
+              Sync now
+            </button>
+            <button class="btn-primary qa-only-btn" id="btn-create-sop" onclick="openDocumentModal()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Create New Document
+            </button>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="table-glass">
+            <thead>
+              <tr>
+                <th>Document ID</th>
+                <th>Title</th>
+                <th>Category</th>
+                <th>Department</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Effective Date</th>
+                <th>Renewal Date</th>
+                <th>Urgency</th>
+                <th>Attachments</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="vault-table-body">
+              <!-- Seeded dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. DEVIATIONS & CAPA VIEWPORT -->
+    <div class="viewport-panel" id="vp-deviations">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Deviation & CAPA Action Registry</h3>
+            <p>Division deviation tracking, RCA (5-Whys/Fishbone), and corrective resolutions.</p>
+          </div>
+          <button class="btn-primary qa-only-btn" id="btn-log-deviation" onclick="openDeviationModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Log New Deviation
+          </button>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="table-glass">
+            <thead>
+              <tr>
+                <th>Deviation ID</th>
+                <th>Summary Description</th>
+                <th>Batch No</th>
+                <th>Severity</th>
+                <th>Date Logged</th>
+                <th>Status</th>
+                <th>RCA Method</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="deviations-table-body">
+              <!-- Seeded dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. ELECTRONIC BMR RELEASE (PHARMA ONLY) -->
+    <div class="viewport-panel" id="vp-bmrs">
+      <div class="two-col-grid">
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Active Pharma Batches</h3>
+              <p>Click a batch to review parameters and execute QA release sign-off.</p>
+            </div>
+          </div>
+          <div class="table-wrapper" style="border: none;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Batch No</th>
+                  <th>Product Name</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="bmr-batch-table">
+                <!-- Seedeed dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card-panel" id="bmr-review-card">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>BMR Review Panel</h3>
+              <p>Review compounding records, analytical results and packaging controls.</p>
+            </div>
+          </div>
+          <div id="bmr-review-placeholder" style="color: var(--text-muted); text-align: center; padding: 40px 0;">
+            Select an active batch from the left panel to review.
+          </div>
+          <div id="bmr-review-content" style="display: none; flex-direction: column; gap: 16px;">
+            <!-- Generated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. SENSORY QC & COA (COSMETIC ONLY) -->
+    <div class="viewport-panel" id="vp-sensory">
+      <div class="two-col-grid">
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Finished Cosmetics Batches</h3>
+              <p>Perform sensory evaluations and log parameters to generate Certificate of Analysis (CoA).</p>
+            </div>
+          </div>
+          <div class="table-wrapper" style="border: none;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Batch No</th>
+                  <th>Product</th>
+                  <th>QC Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="cosmetic-batch-table">
+                <!-- Seeded dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card-panel" id="sensory-evaluation-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Sensory Evaluation Check</h3>
+              <p>Establish sensory scores (1-5 scale) and physical parameters for batch release.</p>
+            </div>
+          </div>
+          <div id="sensory-placeholder" style="color: var(--text-muted); text-align: center; padding: 40px 0;">
+            Select a batch to evaluate sensory parameters.
+          </div>
+          <div id="sensory-content" style="display: none; flex-direction: column; gap: 16px;">
+            <!-- Generated dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. STABILITY CHAMBERS (COSMETIC ONLY) -->
+    <div class="viewport-panel" id="vp-stability">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Cosmetic Stability Studies Tracker</h3>
+            <p>ISO 22716 shelf-life studies tracker across multiple temperature profiles.</p>
+          </div>
+          <button class="btn-primary qc-only-btn" id="btn-launch-stability" onclick="openStabilityModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Launch Stability Study
+          </button>
+        </div>
+
+        <div class="stability-grid" id="stability-study-cards">
+          <!-- Generated dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 7. ALLERGEN & INGREDIENT CHECKER (COSMETIC ONLY) -->
+    <div class="viewport-panel" id="vp-ingredients">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Ingredient & Allergen Compliance Check</h3>
+            <p>Paste a proposed cosmetic formulation to test ingredients against regulatory banned/restricted chemicals and known allergens.</p>
+          </div>
+        </div>
+        <div class="ingredient-input-area">
+          <label style="font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;">Proposed Ingredient Declaration List (separated by commas)</label>
+          <textarea class="textarea-glass" id="raw-ingredients-input" placeholder="Example: Aqua, Glycerin, Butylphenyl Methylpropional, Cetearyl Alcohol, Linalool, Fragrance, Triclosan, Geraniol, Tocopherol..."></textarea>
+          <div>
+            <button class="btn-primary" onclick="runComplianceCheck()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              Scan Ingredients
+            </button>
+            <button class="btn-secondary" onclick="clearComplianceField()">Clear Field</button>
+          </div>
+        </div>
+        
+        <div class="compliance-results" id="ingredient-scan-results" style="display: none;">
+          <!-- Dynamic Scanner Output -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 8. ISO 22716 ASSESSMENT MATRIX (COSMETIC ONLY) -->
+    <div class="viewport-panel" id="vp-iso17">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>ISO 22716:2007 GMP Compliance Checklist</h3>
+            <p>Self-assessment tool covering the 17 core chapters of cosmetic Good Manufacturing Practices.</p>
+          </div>
+          <h3 id="iso-compliance-score" style="color: var(--accent-color); font-weight: 800; font-size: 1.5rem;">0%</h3>
+        </div>
+        
+        <div class="table-wrapper">
+          <table class="table-glass">
+            <thead>
+              <tr>
+                <th style="width: 50px;">Check</th>
+                <th style="width: 140px;">Chapter</th>
+                <th>Standard Guidelines / Requirements</th>
+                <th>Assessment & Verification Notes</th>
+              </tr>
+            </thead>
+            <tbody id="iso-checklist-body">
+              <!-- Seeded dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 9. AUDIT LOG VIEWPORT -->
+    <div class="viewport-panel" id="vp-audit">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Regulatory Compliance System Audit Trail</h3>
+            <p>An immutable, time-stamped log showing all modifications, electronic signatures, and department switcher exception warnings.</p>
+          </div>
+        </div>
+        
+        <div class="audit-timeline" id="full-audit-timeline" style="max-height: 500px;">
+          <!-- Loaded dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW 10. PRODUCTION ACTIVE BATCH COMPUNDING VIEWPORT -->
+    <div class="viewport-panel" id="vp-production-active">
+      <div class="two-col-grid">
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Floor Production & Compounding Log</h3>
+              <p>Initiate a new batch run and record Critical Process Parameters (CPPs) in real-time.</p>
+            </div>
+          </div>
+          
+          <div class="form-container" style="display: flex; flex-direction: column; gap: 16px; margin-top: 12px;">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Select Target Product Formula *</label>
+                <select class="input-glass" id="prod-product-select" style="background: #111827;">
+                  <!-- Dynamically loaded -->
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Initiating Batch Number *</label>
+                <input type="text" class="input-glass" id="prod-batch-no" placeholder="e.g. VP-BT-410">
+              </div>
+            </div>
+
+            <div class="alert-item info" id="prod-clearance-notice" style="margin: 8px 0;">
+              <strong>Line Clearance Status:</strong> Awaiting request creation.
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Critical Temp Profile (°C) *</label>
+                <input type="text" class="input-glass" id="prod-cpp-temp" placeholder="e.g. 42.5">
+              </div>
+              <div class="form-group">
+                <label>Agitation Speed (RPM) *</label>
+                <input type="text" class="input-glass" id="prod-cpp-speed" placeholder="e.g. 1000">
+              </div>
+              <div class="form-group">
+                <label>Compounding Duration (mins) *</label>
+                <input type="text" class="input-glass" id="prod-cpp-time" placeholder="e.g. 45">
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; margin-top: 12px;">
+              <button class="btn-primary" id="btn-request-clearance" onclick="requestLineClearance()">
+                Request Line Clearance
+              </button>
+              <button class="btn-renew" id="btn-save-compounding" onclick="submitCompoundingLog()" style="display: none;">
+                Sign Off & Submit Compounding
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Active Running Batches</h3>
+              <p>Manufacturing compounding state monitor</p>
+            </div>
+          </div>
+          <div class="table-wrapper" style="border: none;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Batch No</th>
+                  <th>Product</th>
+                  <th>Clearance</th>
+                  <th>Compounding</th>
+                  <th>Target</th>
+                </tr>
+              </thead>
+              <tbody id="prod-running-batches-table">
+                <!-- Loaded dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW 11. PRODUCTION LINE CLEARANCE BOARD VIEWPORT -->
+    <div class="viewport-panel" id="vp-production-clearance">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Line Clearance & Pre-start Approvals</h3>
+            <p>Verification board for equipment sanitization and line setups. QA approval required before manufacturing.</p>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table class="table-glass">
+            <thead>
+              <tr>
+                <th>Batch ID</th>
+                <th>Associated Product</th>
+                <th>Requested Timestamp</th>
+                <th>Status</th>
+                <th>Authorized QA Signature</th>
+                <th>Operational Actions</th>
+              </tr>
+            </thead>
+            <tbody id="line-clearance-table-body">
+              <!-- Seeded dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW 12. QC BATCH LABORATORY TESTS VIEWPORT -->
+    <div class="viewport-panel" id="vp-qc-testing">
+      <div class="two-col-grid">
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Lab Sample Testing Portal</h3>
+              <p>Select a compounding handover to input assay levels, microbial counts, and allergens.</p>
+            </div>
+          </div>
+          
+          <div class="table-wrapper" style="border: none; max-height: 250px;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Batch No</th>
+                  <th>Product</th>
+                  <th>Handover</th>
+                  <th>Select</th>
+                </tr>
+              </thead>
+              <tbody id="qc-samples-list">
+                <!-- Populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+
+          <div id="qc-testing-editor" style="display: none; border-top: 1px solid var(--glass-border); padding-top: 16px; margin-top: 16px;">
+            <h4 style="color: #fff; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+              <span id="qc-edit-batch-title">Testing Batch: VP-BT-410</span>
+              <button class="btn-renew" style="padding: 4px 10px; font-size: 0.75rem;" onclick="suggestQCTestingParams()">AI Suggestions</button>
+            </h4>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Assay Yield (%)</label>
+                <input type="text" class="input-glass" id="qc-input-assay" placeholder="e.g. 99.2">
+              </div>
+              <div class="form-group">
+                <label>pH Level</label>
+                <input type="text" class="input-glass" id="qc-input-ph" placeholder="e.g. 5.5">
+              </div>
+              <div class="form-group">
+                <label>Viscosity (cps)</label>
+                <input type="text" class="input-glass" id="qc-input-visc" placeholder="e.g. 35,000">
+              </div>
+            </div>
+
+            <div style="margin: 16px 0; border-top: 1px dashed var(--glass-border); padding-top: 12px;">
+              <h5 style="color: #fff; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px;">Microbiological Screening (Total Viable Counts)</h5>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Total Aerobic Count (TAMC) - Limit: &lt;=100 CFU/g</label>
+                  <input type="text" class="input-glass" id="qc-input-tamc" placeholder="e.g. 15 CFU/g">
+                </div>
+                <div class="form-group">
+                  <label>Yeast & Mold Count (TYMC) - Limit: &lt;=10 CFU/g</label>
+                  <input type="text" class="input-glass" id="qc-input-tymc" placeholder="e.g. 2 CFU/g">
+                </div>
+              </div>
+              <div class="form-group" style="margin-top: 8px;">
+                <label>Target Pathogen Screens (S. aureus, P. aeruginosa, E. coli)</label>
+                <input type="text" class="input-glass" id="qc-input-pathogens" placeholder="e.g. Negative in 1g">
+              </div>
+            </div>
+
+            <div style="margin: 16px 0; border-top: 1px dashed var(--glass-border); padding-top: 12px;">
+              <h5 style="color: #fff; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px;">Formulation Allergen Declaration Scan</h5>
+              <div class="form-group">
+                <label>Ingredient Formula (Separated by commas)</label>
+                <textarea class="textarea-glass" id="qc-input-formula" style="min-height: 60px;" placeholder="Aqua, Glycerin, Fragrance, Linalool, Citral..."></textarea>
+              </div>
+              <button class="btn-secondary" style="margin-top: 4px;" onclick="runQCOnFloorAllergenScan()">Scan Formula for Allergens</button>
+              <div class="allergen-alert-inline" id="qc-allergen-badge-area" style="margin-top: 8px; display: none;">
+                <!-- Allergen scans dynamically outputted here -->
+              </div>
+            </div>
+
+            <button class="btn-primary" style="width: 100%; margin-top: 12px;" onclick="submitQCTestingLog()">
+              Submit Lab Verification & Draft CoA
+            </button>
+          </div>
+        </div>
+
+        <div class="card-panel">
+          <div class="card-header">
+            <div class="card-header-left">
+              <h3>Certificate of Analysis (CoA) Console</h3>
+              <p>Generate, verify, and view finished batch certificates</p>
+            </div>
+          </div>
+          
+          <div class="table-wrapper" style="border: none;">
+            <table class="table-glass">
+              <thead>
+                <tr>
+                  <th>Batch ID</th>
+                  <th>Product</th>
+                  <th>QC Status</th>
+                  <th>Certificate</th>
+                </tr>
+              </thead>
+              <tbody id="qc-coa-generation-table">
+                <!-- Seedeed dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW 13. QA AI TRAINING CENTER -->
+    <div class="viewport-panel" id="vp-qa-ai-training">
+      <div class="card-panel">
+        <div class="card-header">
+          <div class="card-header-left">
+            <h3>Velite Cognitive AI - Quality Vectorbase</h3>
+            <p>Review resolved deviations and formally approve training items for "Human-in-the-Loop" machine learning enhancements.</p>
+          </div>
+          <div class="badge badge-active" id="ai-vector-count">Active vectors: 2</div>
+        </div>
+
+        <div class="table-wrapper" style="margin-top: 16px;">
+          <table class="table-glass">
+            <thead>
+              <tr>
+                <th>Training ID</th>
+                <th>Issue Category</th>
+                <th>Learned Root Cause</th>
+                <th>Learned Preventative Action (CAPA)</th>
+                <th>Curator Signature</th>
+                <th>Train Status</th>
+              </tr>
+            </thead>
+            <tbody id="ai-training-table-body">
+              <!-- Seeded dynamically -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Training Center Conversational Chat -->
+        <div class="training-chat-section">
+          <div class="training-chat-header">
+            <span class="ai-sparkle" style="font-size:1.5rem;">✦</span>
+            <div>
+              <h4>Quality Intelligence Chat</h4>
+              <p>Ask questions about your deviation history, quality patterns, or CAPA strategies. Powered by Claude AI with your training vectorbase as context.</p>
+            </div>
+          </div>
+          <div class="training-chat-messages" id="training-chat-messages">
+            <div class="ai-chat-bubble-ai">I'm trained on your quality vectorbase. Ask me about deviation patterns, CAPA effectiveness, compliance trends, or SOP guidance. I use your approved training data as context.</div>
+          </div>
+          <div class="ai-chat-input-row">
+            <input type="text" class="ai-chat-input" id="training-chat-input" placeholder="e.g. What patterns are common in our deviations?" onkeydown="if(event.key==='Enter')sendTrainingCenterChat()">
+            <button class="ai-chat-send-btn" id="training-chat-send-btn" onclick="sendTrainingCenterChat()">Ask AI ✦</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- --- VELITE AI CO-PILOT SLIDING DRAWER --- -->
+  <button class="floating-ai-fab" id="btn-open-ai-panel">
+    <div class="ai-fab-icon">✦</div>
+    Velite AI
+  </button>
+
+  <div class="ai-drawer-overlay" id="ai-drawer">
+    <div class="ai-drawer-card">
+      <div class="ai-drawer-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="ai-sparkle">✦</span>
+          <h3>Velite AI Thought Engine</h3>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="ai-key-badge no-key" id="ai-key-badge" onclick="configureClaude()">⚙ Set API Key</button>
+          <button class="btn-close-modal" id="btn-close-ai-drawer" style="background: none; font-size: 1.5rem;">&times;</button>
+        </div>
+      </div>
+
+      <div class="ai-drawer-body">
+        <div class="ai-status-pulse">
+          <div class="status-indicator active"></div>
+          <span>Cognitive Analyzer: Active & Learning</span>
+        </div>
+
+        <!-- Chain of thought reasoning logs -->
+        <div class="ai-thought-box">
+          <h4 class="ai-box-title">Chain of Thought Reasoning</h4>
+          <div class="ai-thought-content" id="ai-thinking-log">
+            Velite AI Cognitive Engine initialized. Select a form field, deviation file, or batch review card to invoke high-fidelity analysis.
+          </div>
+        </div>
+
+        <!-- Suggested Actions / Recommendations panel -->
+        <div class="ai-actions-box">
+          <h4 class="ai-box-title">Suggested Quality Recommendations</h4>
+          <div class="ai-recommendations-list" id="ai-suggestions-list">
+            <div class="ai-suggestion-item">
+              <strong>System Check Complete</strong>
+              <p>All active SOPs, BMR limits, and ingredient lists checked. Document SPEC-QC-088 is currently overdue; renewal verification suggested.</p>
+              <button class="btn-renew" style="font-size: 0.75rem; padding: 4px 8px; margin-top: 6px;" onclick="switchTab('documents')">Go to Documents Vault</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Local storage learning statistics -->
+        <div class="ai-stats-pane">
+          <div>
+            <span>Local Vectors</span>
+            <strong id="ai-stat-vectors">2</strong>
+          </div>
+          <div>
+            <span>OOS Rules Checked</span>
+            <strong>26 Banned</strong>
+          </div>
+          <div>
+            <span>Accuracy Rating</span>
+            <strong>99.8%</strong>
+          </div>
+        </div>
+
+        <!-- AI Chat Interface -->
+        <div class="ai-chat-section">
+          <h4 class="ai-box-title">Ask Velite AI</h4>
+          <div class="ai-chat-messages" id="ai-chat-messages">
+            <div class="ai-chat-bubble-ai">Hello! I'm Velite AI, your GMP quality consultant. Ask me about SOPs, deviations, CAPA, regulatory compliance, or batch manufacturing. Configure your Anthropic API key above to activate full Claude AI.</div>
+          </div>
+          <div class="ai-chat-input-row">
+            <input type="text" class="ai-chat-input" id="ai-chat-input" placeholder="Ask about QA, deviations, SOPs, compliance..." onkeydown="if(event.key==='Enter')sendAiChatMessage()">
+            <button class="ai-chat-send-btn" id="ai-chat-send-btn" onclick="sendAiChatMessage()">Send ✦</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- --- MODAL DIALOGS --- -->
+
+  <!-- A. DOCUMENT ADD/EDIT MODAL -->
+  <div class="modal-overlay" id="document-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="doc-modal-title">Create Quality Document</h3>
+        <button class="btn-close-modal" onclick="closeDocumentModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Document ID *</label>
+            <input type="text" class="input-glass" id="modal-doc-id" placeholder="e.g. SOP-QA-109">
+          </div>
+          <div class="form-group">
+            <label>Document Title *</label>
+            <input type="text" class="input-glass" id="modal-doc-title" placeholder="e.g. Batch Packing Protocol">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Category</label>
+            <input type="text" class="input-glass" id="modal-doc-category" list="modal-doc-category-suggestions" placeholder="Pick or type a category (e.g. SOP, Specification, Test Method…)" style="background: #111827;">
+            <datalist id="modal-doc-category-suggestions">
+              <option value="SOP"></option>
+              <option value="Specification"></option>
+              <option value="Policy"></option>
+              <option value="Record"></option>
+              <option value="Test Method"></option>
+              <option value="Validation Protocol"></option>
+              <option value="Validation Report"></option>
+              <option value="Work Instruction"></option>
+              <option value="Form"></option>
+              <option value="Checklist"></option>
+            </datalist>
+          </div>
+          <div class="form-group">
+            <label>Department</label>
+            <select class="input-glass" id="modal-doc-dept" style="background: #111827;">
+              <option value="Quality Assurance">Quality Assurance</option>
+              <option value="Quality Control">Quality Control</option>
+              <option value="Production">Production</option>
+              <option value="HR">HR</option>
+              <option value="Accounts">Accounts</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Version *</label>
+            <input type="text" class="input-glass" id="modal-doc-version" placeholder="e.g. 1.0">
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="input-glass" id="modal-doc-status" style="background: #111827;">
+              <option value="Draft">Draft</option>
+              <option value="In Review">In Review</option>
+              <option value="Approved">Approved</option>
+              <option value="Under Revision">Under Revision</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Applicable Division *</label>
+            <select class="input-glass" id="modal-doc-division" style="background: #111827;">
+              <option value="Pharmaceuticals">Velite Pharmaceuticals</option>
+              <option value="Healthcare">Velite Healthcare</option>
+              <option value="Both">Both (visible in both divisions)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Effective Date <span style="color:var(--text-muted);font-weight:400;font-size:0.74rem;">(optional)</span></label>
+            <input type="date" class="input-glass" id="modal-doc-effdate">
+          </div>
+          <div class="form-group">
+            <label>Renewal Date <span style="color:var(--text-muted);font-weight:400;font-size:0.74rem;">(optional — leave blank for policies, records, one-off documents)</span></label>
+            <input type="date" class="input-glass" id="modal-doc-rendate">
+          </div>
+        </div>
+        <div class="alert-item" style="margin: 4px 0 8px; background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.25); padding: 10px 12px; border-radius: 8px; font-size: 0.78rem; line-height: 1.5; color: #cfe1ff;">
+          <strong style="color:#60a5fa">Preserve formatting & fonts:</strong> uploaded files are stored <em>byte-identical</em> in your browser and Google Drive — we do <strong>not</strong> convert them to Google Docs. To prevent font substitution when others open the Word file:
+          <ul style="margin: 4px 0 0 16px; padding: 0;">
+            <li>In Word: <strong>File → Options → Save</strong> → tick <strong>“Embed fonts in the file”</strong> before uploading.</li>
+            <li>For the official signed copy, upload as <strong>PDF</strong> — fonts are embedded automatically (recommended for QA records).</li>
+            <li>To view: <strong>download</strong> the file (badge in the table) and open it in Microsoft Word / your PDF reader. Avoid <em>“Open with Google Docs”</em> in Drive — that creates a converted copy.</li>
+          </ul>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Upload Source File (Editable Word .docx/.doc)</label>
+            <input type="file" class="input-glass" id="modal-doc-word" accept=".docx,.doc" style="padding-top: 6px;">
+            <div id="modal-word-file-label" style="font-size:0.75rem; color:#60a5fa; margin-top:2px;"></div>
+          </div>
+          <div class="form-group">
+            <label>Upload Signed File (Official Stamped .pdf)</label>
+            <input type="file" class="input-glass" id="modal-doc-pdf" accept=".pdf" style="padding-top: 6px;">
+            <div id="modal-pdf-file-label" style="font-size:0.75rem; color:#f87171; margin-top:2px;"></div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Revision / Change Log Summary</label>
+          <textarea class="textarea-glass" id="modal-doc-changes" style="min-height: 80px;" placeholder="What was changed in this version?"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeDocumentModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveDocument()">Save Document</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- B. DOCUMENT DETAILS & RENEWAL WIZARD MODAL -->
+  <div class="modal-overlay" id="history-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="hist-modal-title">Document History & Renewal</h3>
+        <button class="btn-close-modal" onclick="closeHistoryModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="wizard-header">
+          <div class="wizard-tab active" id="tab-history" onclick="toggleWizard('history')">Version History</div>
+          <div class="wizard-tab" id="tab-renew" onclick="toggleWizard('renew')">Renewal Wizard</div>
+        </div>
+
+        <!-- History Tab Content -->
+        <div class="wizard-content active" id="wiz-history">
+          <div id="hist-doc-info" style="margin-bottom: 16px; font-size: 0.85rem; color: var(--text-secondary);">
+            <!-- Populated dynamically -->
+          </div>
+          <h4 style="font-size: 0.9rem; font-weight: 600; color: #fff; margin-bottom: 8px;">Audit & Version Trail</h4>
+          <div class="revision-timeline" id="modal-revision-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Renewal Wizard Tab Content -->
+        <div class="wizard-content" id="wiz-renew">
+          <div class="alert-item warning" style="margin-bottom: 16px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <div>
+              <strong>Quick Renewal Action:</strong> This utility allows the QA team to bypass complex SOP drafts when a simple renewal is required. You can choose to bump the version and establish a new review cycle.
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom: 12px;">
+            <div class="form-group">
+              <label>Select Renewal Target *</label>
+              <select class="input-glass" id="renew-time-target" style="background: #111827;" onchange="onRenewTargetChange()">
+                <option value="12">Extend by 12 Months (1 Year)</option>
+                <option value="24" selected>Extend by 24 Months (2 Years)</option>
+                <option value="36">Extend by 36 Months (3 Years)</option>
+                <option value="custom">Set custom date manually…</option>
+              </select>
+            </div>
+            <div class="form-group" id="renew-custom-date-wrap" style="display:none;">
+              <label>Custom Renewal Date *</label>
+              <input type="date" class="input-glass" id="renew-custom-date" style="background: #111827;">
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom: 12px;">
+            <div class="form-group">
+              <label>Bump Version Number To</label>
+              <input type="text" class="input-glass" id="renew-version-bump" placeholder="e.g. 2.5">
+            </div>
+            <div class="form-group">
+              <label>New Document Status</label>
+              <select class="input-glass" id="renew-status-target" style="background: #111827;">
+                <option value="Approved" selected>Approved (Effective)</option>
+                <option value="In Review">In Review</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Renewal / Revision Note</label>
+            <textarea class="textarea-glass" id="renew-comments" style="min-height: 80px;" placeholder="e.g., Annual document review conducted. Procedural specs verified. No changes to steps."></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeHistoryModal()">Close Dialog</button>
+        <button class="btn-primary" id="renew-save-btn" onclick="executeDocumentRenewal()" style="display: none;">Authorize Renewal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- C. DEVIATION ADD/RCA MODAL -->
+  <div class="modal-overlay" id="deviation-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="dev-modal-title">Log New QA Deviation</h3>
+        <button class="btn-close-modal" onclick="closeDeviationModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Deviation ID (Auto Generated)</label>
+            <input type="text" class="input-glass" id="dev-id-input" disabled value="DEV-2026-XXX">
+          </div>
+          <div class="form-group">
+            <label>Linked Batch Number *</label>
+            <input type="text" class="input-glass" id="dev-batch-input" placeholder="e.g. VP-BT-409">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Deviation Title / Brief Description *</label>
+          <input type="text" class="input-glass" id="dev-title-input" placeholder="e.g. Temperature drop in mixing tank">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Severity Level</label>
+            <select class="input-glass" id="dev-severity-input" style="background: #111827;">
+              <option value="Minor">Minor Deviation</option>
+              <option value="Major" selected>Major Deviation</option>
+              <option value="Critical">Critical Deviation</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Date Occurred</label>
+            <input type="date" class="input-glass" id="dev-date-input">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Full Occurrence Description</label>
+          <textarea class="textarea-glass" id="dev-desc-input" placeholder="Describe precisely what happened, the parameters observed, the durations, and immediate corrective actions taken."></textarea>
+        </div>
+
+        <div style="border-top: 1px solid var(--glass-border); padding-top: 16px;">
+          <h4 style="font-size: 0.95rem; font-weight: 600; color: #fff; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+              Root Cause Investigation (RCA) - Guided Assistant
+            </div>
+            <button class="btn-renew" style="padding: 4px 10px; font-size: 0.75rem;" onclick="suggestRcaParameters()">Ask Velite AI</button>
+          </h4>
+          <div class="form-group">
+            <label>Select RCA Methodology</label>
+            <select class="input-glass" id="dev-rca-method" style="background: #111827;" onchange="toggleRcaFields()">
+              <option value="5whys" selected>5-Whys Analysis (Drill Down)</option>
+              <option value="fishbone">Fishbone (Ishikawa Parameters)</option>
+            </select>
+          </div>
+          
+          <div id="rca-5whys-section" style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+            <label style="font-size: 0.8rem; color: var(--text-muted);">Guided 5-Whys inputs to determine the absolute root cause:</label>
+            <input type="text" class="input-glass" id="whys-1" placeholder="1. Why did the failure occur?">
+            <input type="text" class="input-glass" id="whys-2" placeholder="2. Why was that?">
+            <input type="text" class="input-glass" id="whys-3" placeholder="3. Why?">
+            <input type="text" class="input-glass" id="whys-4" placeholder="4. Why?">
+            <input type="text" class="input-glass" id="whys-5" placeholder="5. Why? (Ultimate Root Cause)">
+          </div>
+
+          <div id="rca-fishbone-section" style="margin-top: 12px; display: none; flex-direction: column; gap: 8px;">
+            <label style="font-size: 0.8rem; color: var(--text-muted);">Log causes under each manufacturing category:</label>
+            <div class="form-row">
+              <input type="text" class="input-glass" id="fb-man" placeholder="Man (Personnel faults?)">
+              <input type="text" class="input-glass" id="fb-machine" placeholder="Machine (Equipment wear?)">
+            </div>
+            <div class="form-row">
+              <input type="text" class="input-glass" id="fb-material" placeholder="Material (Supplier deviation?)">
+              <input type="text" class="input-glass" id="fb-method" placeholder="Method (SOP unclear?)">
+            </div>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid var(--glass-border); padding-top: 16px;">
+          <h4 style="font-size: 0.95rem; font-weight: 600; color: #fff; margin-bottom: 12px;">Corrective & Preventive Action (CAPA) Plan</h4>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label>Proposed Action Plan *</label>
+            <textarea class="textarea-glass" id="dev-capa-action" style="min-height: 60px;" placeholder="Actions to prevent recurrence..."></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Assignee</label>
+              <input type="text" class="input-glass" id="dev-capa-assignee" placeholder="e.g. Vikram Sen">
+            </div>
+            <div class="form-group">
+              <label>Due Date</label>
+              <input type="date" class="input-glass" id="dev-capa-due">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeDeviationModal()">Cancel</button>
+        <button class="btn-primary" onclick="saveDeviation()">Save Deviation & CAPA</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- D. 21 CFR PART 11 E-SIGNATURE MODAL -->
+  <div class="modal-overlay" id="esign-modal">
+    <div class="modal-card" style="width: 420px;">
+      <div class="modal-header">
+        <h3>21 CFR Part 11 Sign-off</h3>
+        <button class="btn-close-modal" onclick="closeEsignModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item warning">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <div>
+            <strong>Electronic Record Signature:</strong> This action is legally binding, equivalent to a physical handwritten signature under FDA laws.
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Authorized Username</label>
+          <input type="text" class="input-glass" id="esign-user" value="Sanjiv Kumar Verma" readonly>
+        </div>
+        <div class="form-group">
+          <label>Corporate Passcode *</label>
+          <input type="password" class="input-glass" id="esign-pass" placeholder="Enter security credentials">
+        </div>
+        <div class="form-group">
+          <label>Signature Meaning</label>
+          <select class="input-glass" id="esign-meaning" style="background: #111827;">
+            <option value="Approval">QA Product Release Approval</option>
+            <option value="Verification">Deviation & RCA Verification</option>
+            <option value="Review">Document Revision Review</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeEsignModal()">Cancel</button>
+        <button class="btn-primary" onclick="authorizeEsign()">Confirm Electronic Signature</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E1. CAPA CLOSE MODAL -->
+  <div class="modal-overlay" id="capa-close-modal">
+    <div class="modal-card" style="width: 420px;">
+      <div class="modal-header">
+        <h3>Close CAPA — 21 CFR Part 11</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('capa-close-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item warning">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <div><strong>Electronic Sign-off Required:</strong> Closing a deviation CAPA is a regulated action. Enter your corporate passcode to confirm.</div>
+        </div>
+        <div class="form-group">
+          <label>Deviation ID</label>
+          <input type="text" class="input-glass" id="capa-close-dev-id" readonly>
+        </div>
+        <div class="form-group">
+          <label>Corporate Passcode *</label>
+          <input type="password" class="input-glass" id="capa-close-pass" placeholder="Enter security credentials" onkeydown="if(event.key==='Enter')confirmCapaClose()">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="document.getElementById('capa-close-modal').classList.remove('active')">Cancel</button>
+        <button class="btn-primary" onclick="confirmCapaClose()">Confirm & Close CAPA</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E5. GOOGLE DRIVE CLOUD SYNC MODAL -->
+  <!-- E3b. RECENTLY DELETED DOCUMENTS MODAL -->
+  <div class="modal-overlay" id="recently-deleted-modal">
+    <div class="modal-card" style="width: min(980px, 96vw);">
+      <div class="modal-header">
+        <h3>🗑 Recently Deleted Documents</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('recently-deleted-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 10px;">
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0;">
+          Documents deleted in the last 30 days. Google Drive automatically purges items in trash after 30 days — restore now if you need them back.
+        </p>
+        <div id="recently-deleted-body" style="min-height: 100px;">Loading from Drive trash…</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="openRecentlyDeleted()">Refresh</button>
+        <button class="btn-secondary" onclick="document.getElementById('recently-deleted-modal').classList.remove('active')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="cloud-sync-modal">
+    <div class="modal-card" style="width: min(620px, 96vw);">
+      <div class="modal-header">
+        <h3>☁ Google Drive Cloud Sync</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('cloud-sync-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item warning">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          <div>
+            <strong>Shared-folder model:</strong> Each QA Manager signs in with their <em>own</em> Google account. All data lives in <em>one</em> shared folder on the owner's Drive. No more sharing passwords.
+          </div>
+        </div>
+
+        <details style="background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.3);border-radius:6px;padding:10px 12px;">
+          <summary style="cursor:pointer;font-weight:600;color:#60a5fa;font-size:0.85rem;">📋 One-time setup steps (for Sanjiv / owner)</summary>
+          <ol style="margin:10px 0 0 18px;padding:0;font-size:0.82rem;line-height:1.55;color:var(--text-secondary);">
+            <li>Open <a href="https://drive.google.com" target="_blank" style="color:#60a5fa">drive.google.com</a> logged in as <strong>velite@velite.in</strong>.</li>
+            <li>Click <strong>New → New folder</strong> and name it <code>Velite QA Nexus — Shared Data</code>.</li>
+            <li>Right-click the folder → <strong>Share</strong>. Add each QA Manager's Google email (Ramna, Satwinder, etc.) with role <strong>Editor</strong>. Send.</li>
+            <li>Open the folder. Copy its ID from the URL — the long string after <code>/folders/</code>.<br><span style="font-size:0.74rem;opacity:0.75">e.g. for <code>drive.google.com/drive/folders/1A2b3C4d5E6f7G8h9I</code>, the ID is <code>1A2b3C4d5E6f7G8h9I</code>.</span></li>
+            <li>Paste the ID below and click <strong>Save Settings</strong>.</li>
+            <li>Email the ID to each QA Manager — they each paste it once here on their own machine.</li>
+          </ol>
+        </details>
+
+        <div id="cloud-status-line" style="font-size: 0.8rem; color: var(--text-muted);"></div>
+        <div class="form-group">
+          <label>Google OAuth Client ID</label>
+          <input type="text" class="input-glass" id="cloud-client-id" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>Shared Folder ID or URL <span style="color:#f59e0b;font-size:0.74rem;font-weight:500;">(strongly recommended)</span></label>
+          <input type="text" class="input-glass" id="cloud-shared-folder-id" placeholder="Paste the folder ID OR the full Drive URL — both work" autocomplete="off">
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="btn-secondary" style="font-size:0.76rem;padding:5px 11px;" onclick="verifyDriveSharedFolder()" title="Test that this app can read & write the shared folder using your current Drive token">✓ Verify access</button>
+            <p id="cloud-shared-folder-status" style="font-size:0.74rem;margin:0;color:var(--text-muted);flex:1;min-width:200px;"></p>
+          </div>
+          <p id="cloud-shared-folder-verify-result" style="font-size:0.78rem;margin:6px 0 0;line-height:1.4;min-height:1em;"></p>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--text-secondary);cursor:pointer;">
+          <input type="checkbox" id="cloud-autosync"> Auto-backup to Drive after every change
+        </label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--glass-border);padding-top:12px;">
+          <button class="btn-secondary" onclick="connectGoogleDrive()">Connect Drive</button>
+          <button class="btn-primary" onclick="backupToDrive()">Backup Now</button>
+          <button class="btn-secondary" onclick="restoreFromDrive()">Restore</button>
+          <button class="btn-secondary" onclick="disconnectDrive()">Disconnect</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="document.getElementById('cloud-sync-modal').classList.remove('active')">Close</button>
+        <button class="btn-primary" onclick="saveCloudClientId()">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E4. CLAUDE API KEY MODAL -->
+  <div class="modal-overlay" id="apikey-modal">
+    <div class="modal-card" style="width: 480px;">
+      <div class="modal-header">
+        <h3>✦ Velite AI — Anthropic API Configuration</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('apikey-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item" style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+          <div>Enter your Anthropic API key to activate live Claude AI for RCA/CAPA, QC parameter suggestions, and the AI chat. Stored locally in your browser only.</div>
+        </div>
+        <div id="apikey-current-status" style="font-size:0.8rem;color:var(--text-muted)"></div>
+        <div class="form-group">
+          <label>Anthropic API Key</label>
+          <input type="password" class="input-glass" id="apikey-input" placeholder="sk-ant-..." autocomplete="off">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="apikey-clear-btn" onclick="clearClaudeKey()" style="margin-right:auto">Remove Key</button>
+        <button class="btn-secondary" onclick="document.getElementById('apikey-modal').classList.remove('active')">Cancel</button>
+        <button class="btn-primary" onclick="saveClaudeKey()">Save & Activate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E3. LINE CLEARANCE APPROVAL MODAL -->
+  <div class="modal-overlay" id="lineclear-modal">
+    <div class="modal-card" style="width: 420px;">
+      <div class="modal-header">
+        <h3>Line Clearance — 21 CFR Part 11</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('lineclear-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item warning">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <div><strong>QA Sign-off Required:</strong> Approving line clearance authorizes compounding to begin. Enter your corporate passcode.</div>
+        </div>
+        <div class="form-group">
+          <label>Batch Number</label>
+          <input type="text" class="input-glass" id="lineclear-batch-id" readonly>
+        </div>
+        <div class="form-group">
+          <label>Corporate Passcode *</label>
+          <input type="password" class="input-glass" id="lineclear-pass" placeholder="Enter security credentials" onkeydown="if(event.key==='Enter')confirmLineClearance()">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="document.getElementById('lineclear-modal').classList.remove('active')">Cancel</button>
+        <button class="btn-primary" onclick="confirmLineClearance()">Approve & Sign</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E2. AI TRAINING APPROVAL MODAL -->
+  <div class="modal-overlay" id="ai-train-modal">
+    <div class="modal-card" style="width: 460px;">
+      <div class="modal-header">
+        <h3>✦ Human-in-the-Loop AI Training</h3>
+        <button class="btn-close-modal" onclick="document.getElementById('ai-train-modal').classList.remove('active')">&times;</button>
+      </div>
+      <div class="modal-body" style="gap: 12px;">
+        <div class="alert-item" style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+          <div>Approve this resolved deviation to be vectorized into the Velite Cognitive Engine knowledge base.</div>
+        </div>
+        <div id="ai-train-summary" style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="document.getElementById('ai-train-modal').classList.remove('active')">Cancel</button>
+        <button class="btn-primary" onclick="confirmAiTraining()">✦ Approve for AI Training</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E. STABILITY START MODAL -->
+  <div class="modal-overlay" id="stability-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Launch Cosmetic Stability Study</h3>
+        <button class="btn-close-modal" onclick="closeStabilityModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Product Name *</label>
+            <input type="text" class="input-glass" id="modal-stab-prod" placeholder="e.g. Aloe Hydrating Cream">
+          </div>
+          <div class="form-group">
+            <label>Batch Number *</label>
+            <input type="text" class="input-glass" id="modal-stab-batch" placeholder="e.g. VH-AHC-109">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Chamber Testing Temp Profiles (Check all that apply):</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #fff;">
+              <input type="checkbox" id="stab-cond-4" checked> 4°C (Cold Control)
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #fff;">
+              <input type="checkbox" id="stab-cond-25" checked> Room Temp (25°C / 60% RH)
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #fff;">
+              <input type="checkbox" id="stab-cond-37" checked> 37°C (Accelerated)
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #fff;">
+              <input type="checkbox" id="stab-cond-45" checked> 45°C / 75% RH (Stress Test)
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeStabilityModal()">Cancel</button>
+        <button class="btn-primary" onclick="launchStabilityStudy()">Launch Study</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F. CERTIFICATE OF ANALYSIS (COA) PRINT MODAL -->
+  <div class="modal-overlay" id="coa-modal">
+    <div class="modal-card" style="width: 750px;">
+      <div class="modal-header">
+        <h3>Certificate of Analysis (CoA) Preview</h3>
+        <button class="btn-close-modal" onclick="closeCoaModal()">&times;</button>
+      </div>
+      <div class="modal-body print-area" id="coa-print-viewport">
+        <!-- Rendered dynamically for paper size print -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeCoaModal()">Close</button>
+        <button class="btn-primary" onclick="window.print()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+          Print Certificate
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script Libraries -->
+  <script src="data/mockData.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
