@@ -142,8 +142,19 @@ app.get("/api/data/pull", requireApprovedDevice, async (req, res) => {
 // Push a full backup (writes Velite-QA-Nexus-Backup.json)
 app.post("/api/data/backup", requireApprovedDevice, async (req, res) => {
   try {
-    const payload = req.body?.data;
+    let payload = req.body?.data;
     if (!payload) return res.status(400).json({ error: "data required" });
+    // ★ Unwrap if client sent collectAppData()'s already-wrapped shape:
+    // {_app,_version,_savedAt,data:{velite_*}} — we want just {velite_*}.
+    // Detect: no velite_* keys at top level, but has a nested data object with them.
+    const hasVeliteKeys = (o) => o && typeof o === "object" &&
+                                  Object.keys(o).some(k => k.startsWith("velite_"));
+    if (!hasVeliteKeys(payload) && payload.data && hasVeliteKeys(payload.data)) {
+      payload = payload.data;
+    }
+    if (!hasVeliteKeys(payload)) {
+      return res.status(400).json({ error: "data payload has no velite_* keys" });
+    }
     const r = await drive.writeJsonFile("Velite-QA-Nexus-Backup.json", {
       _app: "velite-qa-nexus", _version: 1, _savedAt: new Date().toISOString(),
       _writtenBy: req.deviceId.slice(0, 8),

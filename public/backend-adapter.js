@@ -337,8 +337,23 @@
     try {
       const pull = await window.veliteBackend.pullBackup();
       if (!pull || !pull.backup || !pull.backup.data) return { changed: false, reason: "no_backup" };
+      // ★ Unwrap double-nesting: legacy Edge pushes wrapped the data twice
+      // (collectAppData in app.js returns {_app, _version, _savedAt, data:{...}}
+      // and my server wrapped it again). Real velite_* keys may live at
+      // backup.data.velite_*  OR  backup.data.data.velite_*.
+      let dataObj = pull.backup.data;
+      const hasVeliteKeys = (o) => o && typeof o === "object" &&
+                              Object.keys(o).some(k => k.startsWith("velite_"));
+      if (!hasVeliteKeys(dataObj) && dataObj && dataObj.data && hasVeliteKeys(dataObj.data)) {
+        console.log("[Velite] Unwrapping double-nested backup structure.");
+        dataObj = dataObj.data;
+      }
+      if (!hasVeliteKeys(dataObj)) {
+        console.warn("[Velite] Backup contains no velite_* keys. Structure:", Object.keys(pull.backup.data || {}));
+        return { changed: false, reason: "no_velite_keys" };
+      }
       let changed = 0;
-      for (const [k, v] of Object.entries(pull.backup.data)) {
+      for (const [k, v] of Object.entries(dataObj)) {
         if (!k.startsWith("velite_")) continue;
         const cur = localStorage.getItem(k);
         if (cur !== v) {
