@@ -72,24 +72,24 @@
   // --------------------------------------------------------
   const origFetch = window.fetch.bind(window);
 
+  // Universal Drive fetch interceptor — anything hitting Google Drive gets
+  // handled synthetically (or proxied through /api/*) so the browser never
+  // needs a real Google token. All the app's legacy sync paths become no-ops.
   async function proxyDriveFetch(url, opts) {
     const u = String(url);
-    // Files list / search
-    if (/googleapis\.com\/drive\/v3\/files\?/.test(u)) {
-      // Return synthetic empty result — the app will still call our /api/data/pull separately
-      return new Response(JSON.stringify({ files: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-    // File metadata by ID
+    const method = (opts?.method || "GET").toUpperCase();
+    const SYNTHETIC_FOLDER_ID = "BACKEND_SYNTHETIC_FOLDER";
+
+    // 1. File download by ID (GET with alt=media) → real proxy through backend
     const metaMatch = u.match(/googleapis\.com\/drive\/v3\/files\/([^?/]+)(\?.*)?$/);
     if (metaMatch) {
       const fileId = metaMatch[1];
       const query = metaMatch[2] || "";
-      // Alt=media = download
-      if (/alt=media/.test(query)) {
+      if (method === "GET" && /alt=media/.test(query)) {
         return origFetch(`/api/files/${encodeURIComponent(fileId)}`, { credentials: "include" });
       }
-      // PATCH = trash / update
-      if ((opts?.method || "").toUpperCase() === "PATCH") {
+      // PATCH with trashed:true → real proxy through backend delete
+      if (method === "PATCH") {
         try {
           const body = opts.body ? JSON.parse(opts.body) : {};
           if (body.trashed === true) {
@@ -98,21 +98,29 @@
             return new Response(JSON.stringify({ id: fileId, ...j }), { status: r.status, headers: { "Content-Type": "application/json" } });
           }
         } catch (_) {}
-        // Other PATCH (e.g. metadata update) — accept as no-op for v1
-        return new Response(JSON.stringify({ id: fileId }), { status: 200, headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ id: fileId, name: "synthetic" }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
-      // GET metadata — synthesize a minimal response
-      return new Response(JSON.stringify({ id: fileId, name: "file", size: "0" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      // GET metadata (no alt=media) → synthetic 200
+      return new Response(JSON.stringify({ id: fileId, name: "synthetic", size: "0", mimeType: "application/octet-stream" }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    // Uploads (multipart / resumable)
+
+    // 2. Files list / search (GET with query string) → synthetic empty result
+    if (method === "GET" && /googleapis\.com\/drive\/v3\/files/.test(u)) {
+      return new Response(JSON.stringify({ files: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    // 3. File/folder CREATE (POST to /drive/v3/files) → synthetic 200 with fake ID
+    if (method === "POST" && /googleapis\.com\/drive\/v3\/files/.test(u)) {
+      return new Response(JSON.stringify({ id: SYNTHETIC_FOLDER_ID, name: "synthetic", mimeType: "application/vnd.google-apps.folder" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    // 4. Uploads (multipart / resumable) → synthetic upload success
     if (/googleapis\.com\/upload\/drive\/v3\/files/.test(u)) {
-      // Body could be multipart (JSON create) or resumable init (empty body with metadata header).
-      // For v1 we treat the upload synthetically: return a fake ID so the app continues.
-      // Real upload is done by app.js via a separate /api/files/upload call (added below via override).
-      return new Response(JSON.stringify({ id: "BACKEND_SYNTHETIC_" + Date.now() }), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ id: "BACKEND_SYNTHETIC_" + Date.now(), name: "synthetic" }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
-    // Fallback — let it go through (should never happen for Drive)
-    return origFetch(url, opts);
+
+    // 5. Any other Drive call (DELETE, etc.) → synthetic 200
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
 
   window.fetch = function (input, init) {
