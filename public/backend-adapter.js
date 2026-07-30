@@ -363,13 +363,48 @@
           }
         } catch (_) {}
       }
-      console.log(`[Velite] Hydrated ${changed} key(s) from Drive backup.`);
+      // ★ Mark hydration as "OK" only if we got a real backup with real docs.
+      // The backup-safety guard in app.js checks this flag before allowing
+      // any push to Drive — this prevents mock-seed data from overwriting
+      // the real backup when the pull is empty or failed.
+      try {
+        const docsStr = localStorage.getItem("velite_documents") || "[]";
+        const docs = JSON.parse(docsStr);
+        if (Array.isArray(docs) && docs.length >= 20) {
+          window.__VELITE_HYDRATED_OK = true;
+        }
+      } catch (_) {}
+      console.log(`[Velite] Hydrated ${changed} key(s) from Drive backup. HYDRATED_OK=${!!window.__VELITE_HYDRATED_OK}`);
       return { changed: changed > 0, count: changed };
     } catch (e) {
       console.warn("[Velite] pullAndHydrateFromDrive failed:", e);
       return { changed: false, error: e.message };
     }
   }
+
+  // ★ RECOVERY UTILITY — expose on window for manual recovery from DevTools.
+  // If a browser still has the "good" 199 SOPs in localStorage and Drive's backup
+  // was corrupted, call this from DevTools console to force-push local data:
+  //     window.veliteBackend.forceRestoreToDrive()
+  // This bypasses the sanity guard (uses the raw pushBackup) since it's an
+  // explicit recovery action, not an automatic write.
+  window.veliteBackend.forceRestoreToDrive = async function() {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("velite_") && !["velite_gdrive_client_id","velite_gdrive_shared_folder_id","velite_gdrive_scope_version","velite_claude_api_key","velite_cloud_autosync","velite_cloud_lastsync","velite_cloud_lastpull","velite_gdrive_token"].includes(k)) {
+        data[k] = localStorage.getItem(k);
+      }
+    }
+    const docsCount = (function(){ try { return JSON.parse(data.velite_documents || "[]").length; } catch (_) { return 0; } })();
+    if (!window.confirm(`Force-push ${docsCount} docs (and other velite_* data) from THIS browser's localStorage to Drive?\n\nThis OVERWRITES the current backup.json on Drive. Only do this if you're certain THIS browser has the good, complete data.`)) {
+      return { cancelled: true };
+    }
+    const r = await this.pushBackup(data);
+    if (r) alert(`✓ Restored ${docsCount} docs to Drive.`);
+    else alert("✗ Restore failed — check console.");
+    return r;
+  };
 
   // Continuous background sync — every 60s, quietly pull the latest from Drive
   // and merge. Uses the same primitive that runs on boot.

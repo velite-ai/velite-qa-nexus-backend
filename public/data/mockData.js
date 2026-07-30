@@ -384,18 +384,31 @@ const initialAiKnowledge = [
   }
 ];
 
-// Initialize in localStorage to persist user modifications
-if (!localStorage.getItem("velite_documents")) {
-  localStorage.setItem("velite_documents", JSON.stringify(initialDocuments));
-}
-if (!localStorage.getItem("velite_deviations")) {
-  localStorage.setItem("velite_deviations", JSON.stringify(initialDeviations));
-}
-if (!localStorage.getItem("velite_stability")) {
-  localStorage.setItem("velite_stability", JSON.stringify(initialStabilityStudies));
-}
-if (!localStorage.getItem("velite_batches")) {
-  localStorage.setItem("velite_batches", JSON.stringify(initialBatches));
+// ★ BACKEND-MANAGED MODE GUARD
+// If backend-adapter.js has loaded (sets window.__VELITE_DEVICE_ID), the app
+// is backend-managed and gets its data from Drive via /api/data/pull.
+// SKIP mock-data seeding entirely — otherwise these 6 demo SOPs would be
+// pushed to Drive via auto-sync and OVERWRITE the real 199 SOPs.
+// Only users (velite_users) always get seeded so the login picker works
+// on the very first load before Drive pulls the real user list.
+const _VELITE_BACKEND_MODE = !!window.__VELITE_DEVICE_ID;
+
+if (!_VELITE_BACKEND_MODE) {
+  // Legacy standalone / Vercel mode — seed as before.
+  if (!localStorage.getItem("velite_documents")) {
+    localStorage.setItem("velite_documents", JSON.stringify(initialDocuments));
+  }
+  if (!localStorage.getItem("velite_deviations")) {
+    localStorage.setItem("velite_deviations", JSON.stringify(initialDeviations));
+  }
+  if (!localStorage.getItem("velite_stability")) {
+    localStorage.setItem("velite_stability", JSON.stringify(initialStabilityStudies));
+  }
+  if (!localStorage.getItem("velite_batches")) {
+    localStorage.setItem("velite_batches", JSON.stringify(initialBatches));
+  }
+} else {
+  console.log("[mockData] Backend-managed mode — mock docs/deviations/stability/batches NOT seeded (will be pulled from Drive).");
 }
 if (!localStorage.getItem("velite_users")) {
   localStorage.setItem("velite_users", JSON.stringify(initialUsers));

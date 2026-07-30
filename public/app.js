@@ -4023,10 +4023,26 @@ Current date: 2026-05-24. Be concise and reference specific KB entries or deviat
   };
 
   // ★ BACKEND-PROXIED: backup + restore go through the server's Drive proxy.
+  // Includes a sanity guard: refuses to push if localStorage has dramatically
+  // fewer docs than what's already in Drive (prevents mock-seed data from
+  // overwriting the real 199-SOP backup during a fresh browser's first load).
   window.backupToDrive = async function() {
     if (!window.veliteBackend?.pushBackup) { showNotification("Backend adapter not loaded.", "danger"); return; }
     try {
       const data = collectAppData();
+      // ★ Sanity guard: if local docs count is suspiciously low (< 20), and we
+      // haven't confirmed we hydrated from a real Drive backup, refuse to push.
+      // This blocks the catastrophic overwrite that would otherwise happen when
+      // a fresh browser seeds mockData and the auto-sync fires before pull completes.
+      try {
+        const docsStr = data.velite_documents || "[]";
+        const docs = JSON.parse(docsStr);
+        if (Array.isArray(docs) && docs.length < 20 && !window.__VELITE_HYDRATED_OK) {
+          console.warn("[Velite] Refusing to backup: local has only", docs.length, "docs and hydration hasn't confirmed real data yet. Skipping push to protect Drive backup.");
+          _backupPending = false;
+          return;
+        }
+      } catch (_) {}
       const r = await window.veliteBackend.pushBackup(data);
       if (!r) throw new Error("Backend rejected the backup");
       localStorage.setItem("velite_cloud_lastsync", new Date().toISOString());
