@@ -33,8 +33,12 @@ export async function requestDeviceApproval({ deviceId, label, ip, userAgent }) 
   const deliveredVia = [];
   let firstError = null;
 
-  // Try SMS first (owner's mobile)
-  if (ownerMobile) {
+  // SMS is OPTIONAL. We only try it if a real MSG91 template ID is configured
+  // (India DLT approval takes days — most owners run email-only until that's done).
+  const smsConfigured = !!(process.env.MSG91_AUTH_KEY &&
+                           process.env.MSG91_TEMPLATE_ID &&
+                           !/^(placeholder|PENDING|)$/i.test(process.env.MSG91_TEMPLATE_ID));
+  if (ownerMobile && smsConfigured) {
     try {
       await sendOtpSms({ mobile: ownerMobile, otp });
       deliveredVia.push("sms");
@@ -44,7 +48,7 @@ export async function requestDeviceApproval({ deviceId, label, ip, userAgent }) 
     }
   }
 
-  // Always send email too (fallback + audit trail)
+  // Email is the PRIMARY delivery channel (works without any Indian DLT registration)
   if (ownerEmail) {
     try {
       await sendOtpEmail({ to: ownerEmail, otp, deviceContext: { ip, userAgent } });
@@ -56,11 +60,11 @@ export async function requestDeviceApproval({ deviceId, label, ip, userAgent }) 
   }
 
   if (deliveredVia.length === 0) {
-    // Both channels failed — surface error so admin can investigate.
-    // We still save the OTP so admin can manually approve via /api/admin.
+    // No channel worked — surface an error. We still save the OTP so the admin
+    // can approve manually via /api/admin/devices/:id/approve.
     db.saveOtp(deviceId, otp, OTP_TTL_MS, "manual");
     db.audit(null, "otp_delivery_failed", `device=${deviceId} err=${firstError?.message}`);
-    throw new Error("OTP could not be delivered via SMS or email. Ask admin to approve manually.");
+    throw new Error(`OTP could not be delivered. ${firstError?.message || "Check SMTP configuration."} Owner can approve this device from the Admin panel.`);
   }
 
   db.saveOtp(deviceId, otp, OTP_TTL_MS, deliveredVia.join("+"));
@@ -68,7 +72,7 @@ export async function requestDeviceApproval({ deviceId, label, ip, userAgent }) 
 
   return {
     deliveredVia: deliveredVia.join("+"),
-    maskedMobile: ownerMobile ? maskMobile(ownerMobile) : null,
+    maskedMobile: (ownerMobile && smsConfigured) ? maskMobile(ownerMobile) : null,
     maskedEmail: ownerEmail ? maskEmail(ownerEmail) : null,
     ttlSeconds: OTP_TTL_MS / 1000
   };

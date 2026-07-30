@@ -252,15 +252,20 @@
 
       const overlay = document.createElement("div");
       overlay.id = "velite-otp-overlay";
-      const via = reqInfo.deliveredVia || "sms+email";
-      const target = reqInfo.maskedMobile ? `mobile ending ${reqInfo.maskedMobile.slice(-4)}` :
-                      reqInfo.maskedEmail || "owner";
+      const via = reqInfo.deliveredVia || "email";
+      const parts = [];
+      if (reqInfo.maskedMobile) parts.push(`mobile ending ${reqInfo.maskedMobile.slice(-4)}`);
+      if (reqInfo.maskedEmail) parts.push(`email ${reqInfo.maskedEmail}`);
+      const target = parts.join(" and ") || "owner";
+      const contactHint = via.includes("sms")
+        ? "Ask the owner to check their WhatsApp / SMS for the code."
+        : "Ask the owner to check their inbox for the code (subject starts with \"Velite QA Nexus — device access code\").";
       overlay.innerHTML = `
         <div class="card">
           <h1>🔒 Device approval required</h1>
           <div class="sub">
-            This browser hasn't been approved before. An access code has been sent to the owner (${target}) via <strong>${via}</strong>.
-            <br><br>Enter the 6-digit code below to activate this device.
+            This browser hasn't been approved yet. An access code has been sent to the owner (${target}) via <strong>${via}</strong>.
+            <br><br>${contactHint}<br>Enter the 6-digit code below to activate this device.
           </div>
           <input class="code-input" id="velite-otp-input" maxlength="6" autocomplete="one-time-code" inputmode="numeric" placeholder="••••••">
           <button class="btn" id="velite-otp-submit">Verify & activate</button>

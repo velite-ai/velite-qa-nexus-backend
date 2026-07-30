@@ -1,11 +1,17 @@
 # Velite QA Nexus — Self-Hosted Backend
 
-Team-friendly QA operations app: **no Google login for anyone but the owner**, data still lands in the owner's Google Drive, new devices need OTP approval from the owner's mobile.
+Team-friendly QA operations app: **no Google login for anyone but the owner**, data still lands in the owner's Google Drive, new devices need OTP approval from the owner.
 
 - Owner: `velite@velite.in` (only account that touches Google — once, at setup)
 - QA team: opens URL → clicks their name → works. Zero Google interaction, ever.
-- New device on new PC → OTP sent to owner's mobile (+91 9815042727 via MSG91) + email backup → owner reads OTP to team member → device approved for life.
+- New device on new PC → **OTP emailed to owner's inbox** (velite@velite.in) → owner WhatsApps the code to the team member → device approved for life.
 - Runs on: **Coolify** on a **Hetzner Cloud** VM (CPX22 sufficient).
+
+## OTP delivery — email is the default; SMS is optional
+
+The backend supports both email and SMS OTP. **Email works out-of-the-box** using Gmail SMTP with an App Password (5-min setup, works from day one).
+
+**SMS delivery in India requires DLT registration** (Principal Entity + Sender ID + Template — all separately approved by TRAI, typically 5–10 business days end-to-end). Because of this friction, this project is configured **email-only by default**. To enable SMS later, complete DLT registration then fill in the `MSG91_*` env vars — the backend auto-activates SMS the moment `MSG91_TEMPLATE_ID` becomes non-empty. No code changes needed.
 
 ---
 
@@ -88,9 +94,11 @@ GOOGLE_CLIENT_SECRET=<from Step ②>
 GOOGLE_REFRESH_TOKEN=  ← leave empty for now; you'll fill after Step ⑤
 GOOGLE_SHARED_FOLDER_ID=1cc9gYp2hwzOxLd1_MKzNbXS9ONrFNP6i
 
-MSG91_AUTH_KEY=<your MSG91 Auth Key>
-MSG91_SENDER_ID=VELITE           ← or whichever 6-letter ID you registered
-MSG91_TEMPLATE_ID=<your DLT template ID>
+# --- OPTIONAL — SMS via MSG91. Leave BLANK for email-only mode. ---
+# Fill in later once you complete DLT registration (5–10 business days).
+MSG91_AUTH_KEY=
+MSG91_SENDER_ID=
+MSG91_TEMPLATE_ID=
 OWNER_MOBILE=9815042727
 OWNER_MOBILE_COUNTRY_CODE=91
 
