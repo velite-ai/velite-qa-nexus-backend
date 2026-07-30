@@ -4,7 +4,16 @@
 // Companies: Velite Pharmaceuticals | Velite Healthcare
 // ============================================================
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
+
+  // ★ BACKEND-ADAPTER GATE
+  // Wait for the backend adapter to finish: (1) device approval / OTP flow,
+  // (2) initial pull from Drive backup into localStorage. Only after this
+  // resolves is localStorage populated with the team's existing SOPs.
+  // Without this await, the UI renders empty on first load.
+  if (window.__VELITE_READY) {
+    try { await window.__VELITE_READY; } catch (e) { console.warn("[Velite] __VELITE_READY failed:", e); }
+  }
 
   // ---- AVATAR COLOR PALETTE ----
   const avatarColors = ["#7c3aed","#10b981","#3b82f6","#e28743","#ef4444","#f59e0b","#06b6d4"];

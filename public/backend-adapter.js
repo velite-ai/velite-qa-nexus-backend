@@ -318,6 +318,75 @@
     });
   }
 
-  // Expose a promise so app.js can await it if needed
-  window.__VELITE_READY = checkDeviceOrPrompt();
+  // --------------------------------------------------------
+  // Pull Drive data into localStorage on boot
+  // --------------------------------------------------------
+  // Runs AFTER device approval but BEFORE app.js's DOMContentLoaded handler.
+  // This is what makes the new domain (qa.velite.in) show the existing SOPs
+  // that live in Drive's backup.json. Uses the original localStorage.setItem
+  // (before app.js wraps it) so hydration doesn't trigger a backup push loop.
+  async function pullAndHydrateFromDrive() {
+    try {
+      const pull = await window.veliteBackend.pullBackup();
+      if (!pull || !pull.backup || !pull.backup.data) return { changed: false, reason: "no_backup" };
+      let changed = 0;
+      for (const [k, v] of Object.entries(pull.backup.data)) {
+        if (!k.startsWith("velite_")) continue;
+        const cur = localStorage.getItem(k);
+        if (cur !== v) {
+          localStorage.setItem(k, v);
+          changed++;
+        }
+      }
+      // Merge per-doc metadata too (may contain docs newer than backup.json)
+      if (Array.isArray(pull.perDocMetadata) && pull.perDocMetadata.length) {
+        try {
+          const localDocs = JSON.parse(localStorage.getItem("velite_documents") || "[]");
+          const byId = new Map();
+          for (const d of localDocs) if (d && d.id != null) byId.set(String(d.id).toUpperCase(), d);
+          for (const wrap of pull.perDocMetadata) {
+            const doc = (wrap && wrap.doc) || wrap;
+            if (doc && doc.id != null) byId.set(String(doc.id).toUpperCase(), doc);
+          }
+          const merged = Array.from(byId.values());
+          if (JSON.stringify(merged) !== JSON.stringify(localDocs)) {
+            localStorage.setItem("velite_documents", JSON.stringify(merged));
+            changed++;
+          }
+        } catch (_) {}
+      }
+      console.log(`[Velite] Hydrated ${changed} key(s) from Drive backup.`);
+      return { changed: changed > 0, count: changed };
+    } catch (e) {
+      console.warn("[Velite] pullAndHydrateFromDrive failed:", e);
+      return { changed: false, error: e.message };
+    }
+  }
+
+  // Continuous background sync — every 60s, quietly pull the latest from Drive
+  // and merge. Uses the same primitive that runs on boot.
+  function startBackgroundPull() {
+    setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const r = await pullAndHydrateFromDrive();
+        if (r.changed) {
+          // Trigger a re-render if the app is loaded and exposes the render fn
+          try { window.renderDocumentVault && window.renderDocumentVault(); } catch (_) {}
+          try { window.rebuildMetrics && window.rebuildMetrics(); } catch (_) {}
+        }
+      } catch (_) {}
+    }, 60_000);
+  }
+
+  // Master init: device approval → data hydration → hand off to app.js
+  async function initialize() {
+    await checkDeviceOrPrompt();
+    await pullAndHydrateFromDrive();
+    startBackgroundPull();
+  }
+
+  // app.js's DOMContentLoaded handler should await this promise before rendering,
+  // so it reads a fully-hydrated localStorage.
+  window.__VELITE_READY = initialize();
 })();
