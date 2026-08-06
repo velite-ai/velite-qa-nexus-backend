@@ -100,8 +100,16 @@
         } catch (_) {}
         return new Response(JSON.stringify({ id: fileId, name: "synthetic" }), { status: 200, headers: { "Content-Type": "application/json" } });
       }
-      // GET metadata (no alt=media) → synthetic 200
-      return new Response(JSON.stringify({ id: fileId, name: "synthetic", size: "0", mimeType: "application/octet-stream" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      // GET metadata (no alt=media) → synthetic 200. Report as a folder with
+      // full capabilities so the "Verify access" button in the Cloud Sync modal
+      // shows green ✓ instead of falsely claiming it's a file.
+      return new Response(JSON.stringify({
+        id: fileId,
+        name: "Velite QA Nexus — Shared Data",
+        size: "0",
+        mimeType: "application/vnd.google-apps.folder",
+        capabilities: { canEdit: true, canAddChildren: true, canShare: true, canDelete: false }
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
 
     // 2. Files list / search (GET with query string) → synthetic empty result
