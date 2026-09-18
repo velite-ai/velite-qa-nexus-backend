@@ -2966,7 +2966,7 @@ Current date: 2026-05-24. Be concise and reference specific KB entries or deviat
       // the adapter answers Drive list calls with an empty synthetic result, so
       // this always reported "empty" and Sync now silently did nothing.
       if (!window.veliteBackend?.pullBackup) return { changed: false, reason: "not_connected" };
-      const pull = await window.veliteBackend.pullBackup();
+      const pull = await window.veliteBackend.pullBackup({ withDocMeta: true });
       if (!pull) throw new Error("backend pull failed");
 
       const _tombIdsForPull = _tombstoneIds(); // ★ skip tombstoned

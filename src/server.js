@@ -134,20 +134,26 @@ function requireApprovedDevice(req, res, next) {
 app.get("/api/data/pull", requireApprovedDevice, async (req, res) => {
   try {
     const backup = await drive.readJsonFile("Velite-QA-Nexus-Backup.json");
-    const docs = await drive.listFolderContentsById(await drive.getMetadataFolderId());
-    const docFiles = docs.filter(f => /^doc-.+\.json$/.test(f.name));
 
-    // Fetch each doc JSON. Read by Drive id, not by name: readJsonFile only
-    // searches the shared-folder ROOT, so looking these up by name returned
-    // nothing (or the wrong file) even though the listing above found them.
-    const docContents = [];
-    for (const f of docFiles) {
-      try {
-        const data = await drive.readJsonById(f.id);
-        if (data) docContents.push(data);
-      } catch (e) {
-        console.warn(`[/api/data/pull] skipping unreadable ${f.name}:`, e.message);
-      }
+    // Per-document metadata is OPT-IN (?docMeta=1).
+    //
+    // backup.json alone is everything the app needs to render; the per-document
+    // files are a backstop for anything the blob has lost track of. Reading
+    // them costs one Drive round-trip per file and there are hundreds, so
+    // including them by default put ~a minute in front of every boot — and the
+    // browser blocks its whole UI on this call, which left the login button
+    // dead until it returned. Callers that want the backstop ask for it, and
+    // the adapter asks only after the app is already interactive.
+    let docContents = [];
+    if (req.query.docMeta === "1") {
+      const docs = await drive.listFolderContentsById(await drive.getMetadataFolderId());
+      const docFiles = docs.filter(f => /^doc-.+\.json$/.test(f.name));
+      // Read by Drive id, not by name: readJsonFile only searches the
+      // shared-folder ROOT, so a name lookup returned nothing (or the wrong
+      // file) even though the listing above found them.
+      docContents = await drive.readJsonByIdMany(docFiles, {
+        onError: (f, e) => console.warn(`[/api/data/pull] skipping unreadable ${f.name}:`, e.message)
+      });
     }
 
     res.json({

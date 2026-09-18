@@ -234,3 +234,32 @@ export async function testConnection() {
     return { ok: false, error: e.message };
   }
 }
+
+/**
+ * Read many JSON files by id with bounded concurrency.
+ *
+ * The per-document metadata folder holds hundreds of ~1 KB files. Reading them
+ * one at a time is a Drive round-trip each — 226 files took the better part of
+ * a minute, which blocked the app's boot. Fanning out a few at a time turns
+ * that into a few seconds without hammering the API.
+ * Unreadable files are skipped, never fatal: one bad file must not break sync.
+ */
+export async function readJsonByIdMany(ids, { concurrency = 12, onError } = {}) {
+  const out = [];
+  let next = 0;
+  async function worker() {
+    while (next < ids.length) {
+      const i = next++;
+      try {
+        const data = await readJsonById(ids[i].id ?? ids[i]);
+        if (data) out.push(data);
+      } catch (e) {
+        if (onError) onError(ids[i], e);
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, ids.length) }, worker)
+  );
+  return out;
+}
