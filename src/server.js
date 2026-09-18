@@ -23,9 +23,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
-// One spelling of the metadata folder name, used by both the writer and the
-// reader. They disagreed before, which is why per-doc metadata never synced.
-const METADATA_FOLDER = "Velite QA Nexus — Metadata";
 
 const hasVeliteKeys = (o) =>
   !!o && typeof o === "object" && Object.keys(o).some((k) => k.startsWith("velite_"));
@@ -137,7 +134,7 @@ function requireApprovedDevice(req, res, next) {
 app.get("/api/data/pull", requireApprovedDevice, async (req, res) => {
   try {
     const backup = await drive.readJsonFile("Velite-QA-Nexus-Backup.json");
-    const docs = await drive.listFolderContents(METADATA_FOLDER);
+    const docs = await drive.listFolderContentsById(await drive.getMetadataFolderId());
     const docFiles = docs.filter(f => /^doc-.+\.json$/.test(f.name));
 
     // Fetch each doc JSON. Read by Drive id, not by name: readJsonFile only
@@ -230,7 +227,7 @@ app.post("/api/data/doc-meta", requireApprovedDevice, async (req, res) => {
     // Write into the Metadata subfolder — the same folder /api/data/pull lists.
     // Previously this wrote to the shared-folder ROOT while the pull read the
     // subfolder, so per-document metadata was written and never read back.
-    const metaFolderId = await drive.getSubFolderId(METADATA_FOLDER);
+    const metaFolderId = await drive.getMetadataFolderId();
     const r = await drive.writeJsonFile(`doc-${docId}.json`, {
       _velite_meta_v: 1, savedAt: new Date().toISOString(),
       savedBy: req.deviceId.slice(0, 8), doc
@@ -396,6 +393,17 @@ app.get("*", (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[velite-qa-nexus] listening on :${PORT}`);
+  // Resolve the metadata folder once at boot. A wrong or deleted id shows up
+  // here instead of as per-document metadata that quietly never syncs.
+  drive.verifyMetadataFolder().then((m) => {
+    if (m.ok) {
+      console.log(`[velite-qa-nexus] metadata folder: "${m.name}" (${m.id})` +
+                  `${m.pinned ? " [pinned via GOOGLE_METADATA_FOLDER_ID]" : " [resolved by name — consider pinning GOOGLE_METADATA_FOLDER_ID]"}`);
+    } else {
+      console.error(`[velite-qa-nexus] METADATA FOLDER UNUSABLE: ${m.error}` +
+                    `${m.pinned ? " (GOOGLE_METADATA_FOLDER_ID is set — check the id)" : ""}`);
+    }
+  });
   console.log(`[velite-qa-nexus] PUBLIC_URL=${process.env.PUBLIC_URL || "not set"}`);
   console.log(`[velite-qa-nexus] refresh token: ${process.env.GOOGLE_REFRESH_TOKEN ? "SET" : "NOT SET — visit /setup/start once to generate"}`);
 });

@@ -93,6 +93,7 @@ GOOGLE_CLIENT_ID=<from Step ②>.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=<from Step ②>
 GOOGLE_REFRESH_TOKEN=  ← leave empty for now; you'll fill after Step ⑤
 GOOGLE_SHARED_FOLDER_ID=1cc9gYp2hwzOxLd1_MKzNbXS9ONrFNP6i
+GOOGLE_METADATA_FOLDER_ID=1pvU4RNDJkgpWwrOAlpk_QzPIuzZfO5GN  ← pins the per-document metadata folder; see note below
 
 # --- OPTIONAL — SMS via MSG91. Leave BLANK for email-only mode. ---
 # Fill in later once you complete DLT registration (5–10 business days).
@@ -108,6 +109,24 @@ SMTP_PORT=587
 SMTP_USER=velite@velite.in
 SMTP_PASSWORD=<Google App Password — see below>
 ```
+
+> **Why `GOOGLE_METADATA_FOLDER_ID` matters.** The per-document `doc-{id}.json`
+> files live in a subfolder of the shared folder. Without this variable the
+> server finds that subfolder **by name**, and the shared folder has held three
+> subfolders all called `Velite QA Nexus — Metadata` — two of them created half
+> a second apart by a race in the old find-or-create code. The name lookup falls
+> back to the oldest match, which is correct today but rests on a 0.5-second
+> timestamp gap and on nobody renaming the folder (the separator is an em-dash,
+> `—`, not a hyphen — rename it and the app quietly creates a new empty folder
+> and stops seeing the history). Pinning the id removes all of that.
+>
+> Get the id from the folder's Drive URL:
+> `https://drive.google.com/drive/folders/<THIS PART>`
+>
+> At boot the server logs which folder it resolved and whether it was pinned:
+> `[velite-qa-nexus] metadata folder: "Velite QA Nexus — Metadata" (1pvU4RND…) [pinned via GOOGLE_METADATA_FOLDER_ID]`
+> If the id is wrong, deleted or points at a file, it logs
+> `METADATA FOLDER UNUSABLE` instead — check that line after any deploy.
 
 **Google App Password** — DO NOT use your real Gmail password. Generate one at:
 https://myaccount.google.com/apppasswords → App name: "Velite QA Nexus" → Create → copy the 16-char password → paste into `SMTP_PASSWORD`.

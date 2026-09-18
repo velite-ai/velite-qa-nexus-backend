@@ -122,24 +122,69 @@ export async function trashFile(fileId) {
 }
 
 export async function listFolderContents(subFolderName = null) {
+  const parent = subFolderName ? await getSubFolderId(subFolderName) : getFolderId();
+  return listFolderContentsById(parent);
+}
+
+export async function listFolderContentsById(folderId) {
   const drive = getDrive();
-  const folderId = getFolderId();
-  const parent = subFolderName ? await getSubFolderId(subFolderName) : folderId;
   const list = await drive.files.list({
-    q: `'${parent}' in parents and trashed=false`,
+    q: `'${folderId}' in parents and trashed=false`,
     fields: "files(id,name,size,mimeType,modifiedTime)",
     pageSize: 1000
   });
   return list.data.files || [];
 }
 
-// The shared folder currently holds TWO subfolders both named
-// "Velite QA Nexus — Metadata" (created 2026-05-31 and 2026-06-21). With
-// pageSize:1 and no ordering, Drive could hand back either one on any given
-// call, so a write and a later read could land in different folders and the
-// per-document metadata would look empty. Always take the OLDEST match: it is
-// stable across calls, and it is the folder that holds the existing doc-*.json
-// history. Cached per process so every caller agrees within a run.
+// Where the per-document doc-{id}.json files live.
+export const METADATA_FOLDER_NAME = "Velite QA Nexus — Metadata";
+
+/**
+ * Resolve the metadata folder, preferring an explicitly pinned id.
+ *
+ * Name lookup is not safe here: the shared folder has held THREE subfolders
+ * called "Velite QA Nexus — Metadata" — two created 0.5s apart on 2026-05-31
+ * by a race in the old find-or-create code, plus one from 2026-06-21. Picking
+ * the oldest is deterministic but decides the live folder on a half-second
+ * timestamp gap, and the name itself is fragile (that is an em-dash, and a
+ * rename would silently strand the app on a new empty folder).
+ *
+ * Set GOOGLE_METADATA_FOLDER_ID in the environment to pin it outright. The
+ * name lookup stays as a fallback so existing deployments keep working.
+ */
+export async function getMetadataFolderId() {
+  const pinned = (process.env.GOOGLE_METADATA_FOLDER_ID || "").trim();
+  if (pinned) return pinned;
+  return getSubFolderId(METADATA_FOLDER_NAME);
+}
+
+/**
+ * Check that the resolved metadata folder really is a usable folder.
+ * Called at boot so a wrong or deleted id is caught then, rather than showing
+ * up later as per-document metadata that silently never syncs.
+ */
+export async function verifyMetadataFolder() {
+  const pinned = !!(process.env.GOOGLE_METADATA_FOLDER_ID || "").trim();
+  try {
+    const id = await getMetadataFolderId();
+    const drive = getDrive();
+    const f = await drive.files.get({ fileId: id, fields: "id,name,mimeType,trashed" });
+    const isFolder = f.data.mimeType === "application/vnd.google-apps.folder";
+    if (!isFolder || f.data.trashed) {
+      return {
+        ok: false, id, pinned,
+        error: f.data.trashed ? "folder is in the trash" : `not a folder (${f.data.mimeType})`
+      };
+    }
+    return { ok: true, id, pinned, name: f.data.name };
+  } catch (e) {
+    return { ok: false, pinned, error: e.message };
+  }
+}
+
+// Fallback name lookup. Several folders can share a name, so take the OLDEST
+// match: it is stable across calls, and it is the folder holding the existing
+// doc-*.json history. Cached per process so every caller agrees within a run.
 const _subFolderIds = new Map();
 
 export async function getSubFolderId(name) {
