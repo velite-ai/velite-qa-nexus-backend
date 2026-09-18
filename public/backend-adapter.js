@@ -147,6 +147,8 @@
   // --------------------------------------------------------
   // Real upload/download helpers using the backend
   // --------------------------------------------------------
+  let _docMetaInFlight = null;
+
   window.veliteBackend = {
     uploadFile: async function (blob, filename, docId, kind) {
       const form = new FormData();
@@ -172,9 +174,23 @@
       });
       return r.ok ? await r.json() : null;
     },
-    pullBackup: async function () {
-      const r = await origFetch("/api/data/pull", { credentials: "include" });
-      return r.ok ? await r.json() : null;
+    pullBackup: async function (opts) {
+      // The per-document metadata costs one Drive round-trip per file and there
+      // are hundreds of them, so it is opt-in. Boot must not wait on it.
+      const withDocMeta = !!(opts && opts.withDocMeta);
+      if (!withDocMeta) {
+        const r = await origFetch("/api/data/pull", { credentials: "include" });
+        return r.ok ? await r.json() : null;
+      }
+      // Share one in-flight metadata request rather than starting a second
+      // read of every doc-*.json. Completed results are NOT cached, so an
+      // explicit Sync now always fetches fresh.
+      if (!_docMetaInFlight) {
+        _docMetaInFlight = origFetch("/api/data/pull?docMeta=1", { credentials: "include" })
+          .then((r) => (r.ok ? r.json() : null))
+          .finally(() => { _docMetaInFlight = null; });
+      }
+      return _docMetaInFlight;
     },
     pushDocMeta: async function (docId, doc) {
       const r = await origFetch("/api/data/doc-meta", {
@@ -359,9 +375,9 @@
   // This is what makes the new domain (qa.velite.in) show the existing SOPs
   // that live in Drive's backup.json. Uses the original localStorage.setItem
   // (before app.js wraps it) so hydration doesn't trigger a backup push loop.
-  async function pullAndHydrateFromDrive() {
+  async function pullAndHydrateFromDrive(opts) {
     try {
-      const pull = await window.veliteBackend.pullBackup();
+      const pull = await window.veliteBackend.pullBackup(opts);
       if (!pull || !pull.backup || !pull.backup.data) return { changed: false, reason: "no_backup" };
       // ★ Unwrap double-nesting: legacy Edge pushes wrapped the data twice
       // (collectAppData in app.js returns {_app, _version, _savedAt, data:{...}}
@@ -496,8 +512,23 @@
   // Master init: device approval → data hydration → hand off to app.js
   async function initialize() {
     await checkDeviceOrPrompt();
+    // app.js blocks its entire UI — including the login button's click handler —
+    // on this promise, so only the fast backup.json hydration belongs here.
     await pullAndHydrateFromDrive();
     startBackgroundPull();
+    // The per-document backstop is worth having but not worth waiting for.
+    // Fetch it once, after the app is already interactive, and re-render if it
+    // turned anything up.
+    setTimeout(() => {
+      pullAndHydrateFromDrive({ withDocMeta: true })
+        .then((r) => {
+          if (r && r.changed) {
+            try { window.renderDocumentVault && window.renderDocumentVault(); } catch (_) {}
+            try { window.rebuildMetrics && window.rebuildMetrics(); } catch (_) {}
+          }
+        })
+        .catch((e) => console.warn("[Velite] per-doc backstop pull failed:", e));
+    }, 3000);
   }
 
   // app.js's DOMContentLoaded handler should await this promise before rendering,
