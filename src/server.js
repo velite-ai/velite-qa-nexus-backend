@@ -16,11 +16,32 @@ import { dirname, join } from "node:path";
 
 import * as db from "./db.js";
 import * as drive from "./drive.js";
+import { mergeBackupPayload } from "./merge.js";
 import { requestDeviceApproval, verifyDeviceOtp, isDeviceApproved, generateDeviceId } from "./auth.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 const PORT = parseInt(process.env.PORT || "8080", 10);
+
+// One spelling of the metadata folder name, used by both the writer and the
+// reader. They disagreed before, which is why per-doc metadata never synced.
+const METADATA_FOLDER = "Velite QA Nexus — Metadata";
+
+const hasVeliteKeys = (o) =>
+  !!o && typeof o === "object" && Object.keys(o).some((k) => k.startsWith("velite_"));
+
+// Backup pushes are read-modify-write against a single Drive file. Two that
+// overlap would both read the pre-merge copy and the second would write away
+// the first one's additions — the same lost-update shape we are fixing, just
+// narrower. Everything runs in one container, so chaining the writes on one
+// promise is enough to make them strictly sequential.
+let _backupQueue = Promise.resolve();
+function serializeBackupWrite(task) {
+  const run = _backupQueue.then(task, task);
+  // Keep the chain alive even when a task rejects, and don't retain results.
+  _backupQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
 
 const app = express();
 app.set("trust proxy", true);
@@ -116,16 +137,20 @@ function requireApprovedDevice(req, res, next) {
 app.get("/api/data/pull", requireApprovedDevice, async (req, res) => {
   try {
     const backup = await drive.readJsonFile("Velite-QA-Nexus-Backup.json");
-    const docs = await drive.listFolderContents("Velite QA Nexus — Metadata");
+    const docs = await drive.listFolderContents(METADATA_FOLDER);
     const docFiles = docs.filter(f => /^doc-.+\.json$/.test(f.name));
 
-    // Fetch each doc JSON
+    // Fetch each doc JSON. Read by Drive id, not by name: readJsonFile only
+    // searches the shared-folder ROOT, so looking these up by name returned
+    // nothing (or the wrong file) even though the listing above found them.
     const docContents = [];
     for (const f of docFiles) {
       try {
-        const dl = await drive.readJsonFile(f.name);
-        if (dl?.data) docContents.push(dl.data);
-      } catch (_) {}
+        const data = await drive.readJsonById(f.id);
+        if (data) docContents.push(data);
+      } catch (e) {
+        console.warn(`[/api/data/pull] skipping unreadable ${f.name}:`, e.message);
+      }
     }
 
     res.json({
@@ -147,21 +172,50 @@ app.post("/api/data/backup", requireApprovedDevice, async (req, res) => {
     // ★ Unwrap if client sent collectAppData()'s already-wrapped shape:
     // {_app,_version,_savedAt,data:{velite_*}} — we want just {velite_*}.
     // Detect: no velite_* keys at top level, but has a nested data object with them.
-    const hasVeliteKeys = (o) => o && typeof o === "object" &&
-                                  Object.keys(o).some(k => k.startsWith("velite_"));
     if (!hasVeliteKeys(payload) && payload.data && hasVeliteKeys(payload.data)) {
       payload = payload.data;
     }
     if (!hasVeliteKeys(payload)) {
       return res.status(400).json({ error: "data payload has no velite_* keys" });
     }
-    const r = await drive.writeJsonFile("Velite-QA-Nexus-Backup.json", {
-      _app: "velite-qa-nexus", _version: 1, _savedAt: new Date().toISOString(),
-      _writtenBy: req.deviceId.slice(0, 8),
-      data: payload
+    // ★ Merge, never blind-overwrite.
+    //
+    // Every client pushes its whole copy of localStorage. A client that loaded
+    // before someone else's upload pushes a blob that is missing that upload,
+    // and writing it verbatim erased the newer attachment for everyone — the
+    // cause of the missing-PDF reports in Sept 2026. mergeBackupPayload lets a
+    // push add and update freely, but stops it dropping an attachment or a
+    // document it simply had not heard about. Explicit deletes still work:
+    // those travel as tombstones, which are merged too.
+    const { r, stats, mergedPayload } = await serializeBackupWrite(async () => {
+      const current = await drive.readJsonFile("Velite-QA-Nexus-Backup.json");
+      // Stored shape is {_app,...,data:{velite_*}}, but some legacy writes
+      // nested it one level deeper. Accept either rather than silently merging
+      // against nothing, which would put us straight back to overwrite.
+      let stored = current?.data?.data || null;
+      if (stored && !hasVeliteKeys(stored) && hasVeliteKeys(stored.data)) stored = stored.data;
+
+      const merged = mergeBackupPayload(payload, stored);
+      const written = await drive.writeJsonFile("Velite-QA-Nexus-Backup.json", {
+        _app: "velite-qa-nexus", _version: 1, _savedAt: new Date().toISOString(),
+        _writtenBy: req.deviceId.slice(0, 8),
+        data: merged.data
+      });
+      return { r: written, stats: merged.stats, mergedPayload: merged.data };
     });
-    db.audit(req.deviceId, "backup_pushed", `bytes=${JSON.stringify(payload).length}`);
-    res.json({ ok: true, ...r });
+    if (stats.attachmentsPreserved || stats.documentsRecovered) {
+      console.log(
+        `[/api/data/backup] stale push from ${req.deviceId.slice(0, 8)}: kept ` +
+        `${stats.attachmentsPreserved} attachment(s) and ${stats.documentsRecovered} document(s) it would have erased.`
+      );
+    }
+    db.audit(
+      req.deviceId,
+      "backup_pushed",
+      `bytes=${JSON.stringify(mergedPayload).length} docs=${stats.documents} ` +
+      `attachmentsPreserved=${stats.attachmentsPreserved} documentsRecovered=${stats.documentsRecovered}`
+    );
+    res.json({ ok: true, ...r, ...stats });
   } catch (e) {
     console.error("[/api/data/backup]", e);
     res.status(500).json({ error: e.message });
@@ -173,15 +227,14 @@ app.post("/api/data/doc-meta", requireApprovedDevice, async (req, res) => {
   try {
     const { docId, doc } = req.body || {};
     if (!docId || !doc) return res.status(400).json({ error: "docId and doc required" });
-    // Ensure Metadata subfolder exists (writeJsonFile writes to root; we need to put doc-{id}.json inside Metadata)
-    await drive.listFolderContents("Velite QA Nexus — Metadata"); // ensures folder exists
-    // Note: writeJsonFile writes to shared folder root by default. To keep the per-doc files inside the Metadata subfolder,
-    // we invoke a specialized version. For simplicity in v1 we write to the shared folder root with the "doc-{id}" prefix.
-    // TODO(v2): write into the Metadata subfolder explicitly.
+    // Write into the Metadata subfolder — the same folder /api/data/pull lists.
+    // Previously this wrote to the shared-folder ROOT while the pull read the
+    // subfolder, so per-document metadata was written and never read back.
+    const metaFolderId = await drive.getSubFolderId(METADATA_FOLDER);
     const r = await drive.writeJsonFile(`doc-${docId}.json`, {
       _velite_meta_v: 1, savedAt: new Date().toISOString(),
       savedBy: req.deviceId.slice(0, 8), doc
-    });
+    }, metaFolderId);
     db.audit(req.deviceId, "doc_meta_pushed", `doc=${docId}`);
     res.json({ ok: true, ...r });
   } catch (e) {
@@ -326,6 +379,14 @@ h1{color:#22c55e}code{background:#1f2937;padding:2px 6px;border-radius:4px}pre{b
 // ============================================================
 // STATIC frontend
 // ============================================================
+// Serve the merge rules to the browser so the client and the server share ONE
+// implementation. src/merge.js is dependency-free ESM and runs unchanged in
+// both; the adapter imports it from here when hydrating.
+app.get("/merge.js", (req, res) => {
+  res.type("application/javascript");
+  res.sendFile(join(__dirname, "merge.js"));
+});
+
 app.use(express.static(PUBLIC_DIR, { extensions: ["html"] }));
 
 // Fallback to index.html for client-side routing

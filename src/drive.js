@@ -58,9 +58,22 @@ export async function readJsonFile(fileName) {
   }
 }
 
-export async function writeJsonFile(fileName, jsonPayload) {
+// Read a JSON file by its Drive id. Unlike readJsonFile this does not care
+// which folder the file sits in, so a caller that has already listed a folder
+// can read what it found instead of re-searching the shared-folder root.
+export async function readJsonById(fileId) {
   const drive = getDrive();
-  const folderId = getFolderId();
+  const dl = await drive.files.get({ fileId, alt: "media" }, { responseType: "text" });
+  try {
+    return JSON.parse(dl.data);
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function writeJsonFile(fileName, jsonPayload, parentId = null) {
+  const drive = getDrive();
+  const folderId = parentId || getFolderId();
   const body = JSON.stringify(jsonPayload, null, 2);
   const media = { mimeType: "application/json", body: Readable.from(body) };
 
@@ -120,17 +133,43 @@ export async function listFolderContents(subFolderName = null) {
   return list.data.files || [];
 }
 
-async function getSubFolderId(name) {
+// The shared folder currently holds TWO subfolders both named
+// "Velite QA Nexus — Metadata" (created 2026-05-31 and 2026-06-21). With
+// pageSize:1 and no ordering, Drive could hand back either one on any given
+// call, so a write and a later read could land in different folders and the
+// per-document metadata would look empty. Always take the OLDEST match: it is
+// stable across calls, and it is the folder that holds the existing doc-*.json
+// history. Cached per process so every caller agrees within a run.
+const _subFolderIds = new Map();
+
+export async function getSubFolderId(name) {
+  if (_subFolderIds.has(name)) return _subFolderIds.get(name);
   const drive = getDrive();
   const parent = getFolderId();
   const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and '${parent}' in parents and trashed=false`;
-  const list = await drive.files.list({ q, fields: "files(id,name)", pageSize: 1 });
-  if (list.data.files?.[0]) return list.data.files[0].id;
+  const list = await drive.files.list({
+    q,
+    fields: "files(id,name,createdTime)",
+    orderBy: "createdTime",
+    pageSize: 10
+  });
+  const matches = list.data.files || [];
+  if (matches.length > 1) {
+    console.warn(
+      `[drive] ${matches.length} folders named "${name}" in the shared folder; ` +
+      `using the oldest (${matches[0].id}). Merge the duplicates in Drive to remove this warning.`
+    );
+  }
+  if (matches[0]) {
+    _subFolderIds.set(name, matches[0].id);
+    return matches[0].id;
+  }
   // Create if missing
   const r = await drive.files.create({
     requestBody: { name, mimeType: "application/vnd.google-apps.folder", parents: [parent] },
     fields: "id,name"
   });
+  _subFolderIds.set(name, r.data.id);
   return r.data.id;
 }
 

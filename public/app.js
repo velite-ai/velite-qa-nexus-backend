@@ -2929,48 +2929,28 @@ Current date: 2026-05-24. Be concise and reference specific KB entries or deviat
 
   // Atomic single-document write. ~1 KB payload, one API call.
   // This is the key reliability primitive: a failed write loses ONE doc, not all.
+  // Write this document's own metadata file — the per-document safety net that
+  // makes a save independent of the shared backup.json blob.
+  //
+  // This used to POST straight at googleapis.com. Under the self-hosted backend
+  // the browser has no Google token, and the adapter answers every Drive URL
+  // with a synthetic 200 and a fake file id — so the write went nowhere while
+  // reporting success, from the Coolify migration (30 Jul 2026) onward. Going
+  // through /api/data/doc-meta means the server writes it with the real
+  // credentials, into the same folder /api/data/pull reads.
   window.writeDocToDriveMeta = async function(doc) {
-    if (!gdriveAccessToken || !doc || !doc.id) return null;
+    if (!doc || !doc.id) return null;
+    if (!window.veliteBackend?.pushDocMeta) {
+      console.warn("writeDocToDriveMeta: backend adapter not loaded");
+      return null;
+    }
     try {
-      const folderId = await findOrCreateDriveMetaFolder();
-      const name = `doc-${doc.id}.json`;
-      const payload = JSON.stringify({
-        _velite_meta_v: 1,
-        savedAt: new Date().toISOString(),
-        savedBy: state.currentUser?.name || "unknown",
-        doc
-      }, null, 2);
-      const existingId = await findDocMetaFileId(doc.id);
-      let resp;
-      if (existingId) {
-        resp = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=media`, {
-          method: "PATCH",
-          headers: { Authorization: "Bearer " + gdriveAccessToken, "Content-Type": "application/json" },
-          body: payload
-        });
-      } else {
-        const boundary = "velite_doc_boundary_" + Date.now();
-        const meta = { name, mimeType: "application/json", parents: [folderId] };
-        const body =
-          `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
-          JSON.stringify(meta) +
-          `\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n` +
-          payload +
-          `\r\n--${boundary}--`;
-        resp = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime", {
-          method: "POST",
-          headers: { Authorization: "Bearer " + gdriveAccessToken, "Content-Type": `multipart/related; boundary=${boundary}` },
-          body
-        });
-      }
-      if (!resp.ok) {
-        const t = await resp.text();
-        throw new Error("doc-meta write failed (" + resp.status + "): " + t.slice(0, 200));
-      }
-      return await resp.json();
+      const r = await window.veliteBackend.pushDocMeta(doc.id, doc);
+      if (!r) throw new Error("backend rejected the doc-meta write");
+      return r;
     } catch (e) {
       console.warn(`writeDocToDriveMeta failed for ${doc.id}:`, e);
-      // Don't show user-facing error — the legacy backup.json still runs as a fallback.
+      // backup.json still carries this document, so a failure here is not fatal.
       return null;
     }
   };
@@ -2981,28 +2961,21 @@ Current date: 2026-05-24. Be concise and reference specific KB entries or deviat
     opts = opts || {};
     if (!gdriveAccessToken) return { changed: false, reason: "not_connected" };
     try {
-      const folderId = await findOrCreateDriveMetaFolder();
-      const q = encodeURIComponent(`'${folderId}' in parents and mimeType='application/json' and trashed=false`);
-      const listR = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,modifiedTime)&pageSize=1000`, {
-        headers: { Authorization: "Bearer " + gdriveAccessToken }
-      });
-      if (!listR.ok) throw new Error("Drive meta list failed (" + listR.status + ")");
-      const list = await listR.json();
-      const remoteDocs = [];
+      // The per-document files come from the backend, which reads them with the
+      // real Drive credentials. Listing them from the browser cannot work here:
+      // the adapter answers Drive list calls with an empty synthetic result, so
+      // this always reported "empty" and Sync now silently did nothing.
+      if (!window.veliteBackend?.pullBackup) return { changed: false, reason: "not_connected" };
+      const pull = await window.veliteBackend.pullBackup();
+      if (!pull) throw new Error("backend pull failed");
+
       const _tombIdsForPull = _tombstoneIds(); // ★ skip tombstoned
-      for (const f of (list.files || [])) {
-        if (!/^doc-.+\.json$/.test(f.name)) continue;
-        const _idm = f.name.match(/^doc-(.+)\.json$/);
-        if (_idm && _tombIdsForPull.has(_idm[1].toUpperCase())) continue;
-        try {
-          const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, {
-            headers: { Authorization: "Bearer " + gdriveAccessToken }
-          });
-          if (!dl.ok) continue;
-          const wrap = await dl.json();
-          const doc = wrap && wrap.doc ? wrap.doc : wrap; // tolerate flat layout
-          if (doc && doc.id) remoteDocs.push(doc);
-        } catch (e) { /* one bad file shouldn't break the sync */ }
+      const remoteDocs = [];
+      for (const wrap of (pull.perDocMetadata || [])) {
+        const doc = wrap && wrap.doc ? wrap.doc : wrap; // tolerate flat layout
+        if (!doc || !doc.id) continue;
+        if (_tombIdsForPull.has(String(doc.id).toUpperCase())) continue;
+        remoteDocs.push(doc);
       }
       if (remoteDocs.length === 0) return { changed: false, reason: "empty" };
 

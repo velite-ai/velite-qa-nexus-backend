@@ -337,6 +337,24 @@
   // --------------------------------------------------------
   // Pull Drive data into localStorage on boot
   // --------------------------------------------------------
+  // The merge rules are the server's src/merge.js, served at /merge.js so the
+  // browser and the backend enforce exactly the same thing. Loaded once and
+  // cached. If it cannot be loaded we fall back to the old overwrite path
+  // rather than blocking sync — but we say so loudly, because that path is the
+  // one that loses attachments.
+  let _mergeRules;
+  async function getMergeRules() {
+    if (_mergeRules !== undefined) return _mergeRules;
+    try {
+      _mergeRules = await import("/merge.js");
+    } catch (e) {
+      console.error("[Velite] could not load /merge.js — falling back to overwrite-on-pull, " +
+                    "which can drop attachments. Check the server deploy.", e);
+      _mergeRules = null;
+    }
+    return _mergeRules;
+  }
+
   // Runs AFTER device approval but BEFORE app.js's DOMContentLoaded handler.
   // This is what makes the new domain (qa.velite.in) show the existing SOPs
   // that live in Drive's backup.json. Uses the original localStorage.setItem
@@ -360,31 +378,61 @@
         console.warn("[Velite] Backup contains no velite_* keys. Structure:", Object.keys(pull.backup.data || {}));
         return { changed: false, reason: "no_velite_keys" };
       }
+      const merge = await getMergeRules();
       let changed = 0;
       for (const [k, v] of Object.entries(dataObj)) {
         if (!k.startsWith("velite_")) continue;
         const cur = localStorage.getItem(k);
-        if (cur !== v) {
-          localStorage.setItem(k, v);
-          changed++;
+        if (cur === v) continue;
+
+        // ★ velite_documents is merged, not overwritten.
+        //
+        // This runs on boot AND every 60s. Overwriting meant that if you
+        // uploaded a PDF and the pull landed before your push did, the pull
+        // wiped your own attachment out of localStorage — the upload appeared
+        // to vanish while you were looking at it. Merging keeps any attachment
+        // this browser holds that the shared copy has not caught up with yet.
+        if (k === "velite_documents" && merge) {
+          try {
+            const remote = JSON.parse(v || "[]");
+            const local = JSON.parse(cur || "[]");
+            const tombIds = JSON.parse(dataObj.velite_doc_tombstones || "[]")
+              .map((t) => t && t.id).filter(Boolean);
+            const merged = merge.mergeDocuments(remote, local, tombIds);
+            const out = JSON.stringify(merged);
+            if (out !== cur) { localStorage.setItem(k, out); changed++; }
+            continue;
+          } catch (e) {
+            console.warn("[Velite] document merge failed, taking the shared copy:", e);
+          }
         }
+        localStorage.setItem(k, v);
+        changed++;
       }
-      // Merge per-doc metadata too (may contain docs newer than backup.json)
-      if (Array.isArray(pull.perDocMetadata) && pull.perDocMetadata.length) {
+
+      // Per-document metadata is a SAFETY NET, not an authority: it only adds
+      // documents the shared backup is missing and restores attachments the
+      // backup has lost track of. It must never override the backup wholesale —
+      // doing that would freeze those documents at whatever the metadata file
+      // last said, silently reverting later edits.
+      if (Array.isArray(pull.perDocMetadata) && pull.perDocMetadata.length && merge) {
         try {
           const localDocs = JSON.parse(localStorage.getItem("velite_documents") || "[]");
-          const byId = new Map();
-          for (const d of localDocs) if (d && d.id != null) byId.set(String(d.id).toUpperCase(), d);
-          for (const wrap of pull.perDocMetadata) {
-            const doc = (wrap && wrap.doc) || wrap;
-            if (doc && doc.id != null) byId.set(String(doc.id).toUpperCase(), doc);
-          }
-          const merged = Array.from(byId.values());
-          if (JSON.stringify(merged) !== JSON.stringify(localDocs)) {
-            localStorage.setItem("velite_documents", JSON.stringify(merged));
+          const metaDocs = pull.perDocMetadata
+            .map((wrap) => (wrap && wrap.doc) || wrap)
+            .filter((d) => d && d.id != null);
+          const tombIds = JSON.parse(localStorage.getItem("velite_doc_tombstones") || "[]")
+            .map((t) => t && t.id).filter(Boolean);
+          // localDocs is the incoming/authoritative side; metaDocs only fills gaps.
+          const merged = merge.mergeDocuments(localDocs, metaDocs, tombIds);
+          const out = JSON.stringify(merged);
+          if (out !== JSON.stringify(localDocs)) {
+            localStorage.setItem("velite_documents", out);
             changed++;
           }
-        } catch (_) {}
+        } catch (e) {
+          console.warn("[Velite] per-doc metadata merge failed:", e);
+        }
       }
       // ★ Mark hydration as "OK" only if we got a real backup with real docs.
       // The backup-safety guard in app.js checks this flag before allowing

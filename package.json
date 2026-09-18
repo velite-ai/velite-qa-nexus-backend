@@ -1,12 +1,13 @@
 {
   "name": "velite-qa-nexus-backend",
   "version": "1.0.0",
-  "description": "Velite QA Nexus — self-hosted backend with device-approval + SMS OTP + server-side Drive proxy",
+  "description": "Velite QA Nexus \u2014 self-hosted backend with device-approval + SMS OTP + server-side Drive proxy",
   "main": "src/server.js",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20"
