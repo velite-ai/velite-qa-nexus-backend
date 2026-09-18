@@ -58,9 +58,22 @@ export async function readJsonFile(fileName) {
   }
 }
 
-export async function writeJsonFile(fileName, jsonPayload) {
+// Read a JSON file by its Drive id. Unlike readJsonFile this does not care
+// which folder the file sits in, so a caller that has already listed a folder
+// can read what it found instead of re-searching the shared-folder root.
+export async function readJsonById(fileId) {
   const drive = getDrive();
-  const folderId = getFolderId();
+  const dl = await drive.files.get({ fileId, alt: "media" }, { responseType: "text" });
+  try {
+    return JSON.parse(dl.data);
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function writeJsonFile(fileName, jsonPayload, parentId = null) {
+  const drive = getDrive();
+  const folderId = parentId || getFolderId();
   const body = JSON.stringify(jsonPayload, null, 2);
   const media = { mimeType: "application/json", body: Readable.from(body) };
 
@@ -109,28 +122,99 @@ export async function trashFile(fileId) {
 }
 
 export async function listFolderContents(subFolderName = null) {
+  const parent = subFolderName ? await getSubFolderId(subFolderName) : getFolderId();
+  return listFolderContentsById(parent);
+}
+
+export async function listFolderContentsById(folderId) {
   const drive = getDrive();
-  const folderId = getFolderId();
-  const parent = subFolderName ? await getSubFolderId(subFolderName) : folderId;
   const list = await drive.files.list({
-    q: `'${parent}' in parents and trashed=false`,
+    q: `'${folderId}' in parents and trashed=false`,
     fields: "files(id,name,size,mimeType,modifiedTime)",
     pageSize: 1000
   });
   return list.data.files || [];
 }
 
-async function getSubFolderId(name) {
+// Where the per-document doc-{id}.json files live.
+export const METADATA_FOLDER_NAME = "Velite QA Nexus — Metadata";
+
+/**
+ * Resolve the metadata folder, preferring an explicitly pinned id.
+ *
+ * Name lookup is not safe here: the shared folder has held THREE subfolders
+ * called "Velite QA Nexus — Metadata" — two created 0.5s apart on 2026-05-31
+ * by a race in the old find-or-create code, plus one from 2026-06-21. Picking
+ * the oldest is deterministic but decides the live folder on a half-second
+ * timestamp gap, and the name itself is fragile (that is an em-dash, and a
+ * rename would silently strand the app on a new empty folder).
+ *
+ * Set GOOGLE_METADATA_FOLDER_ID in the environment to pin it outright. The
+ * name lookup stays as a fallback so existing deployments keep working.
+ */
+export async function getMetadataFolderId() {
+  const pinned = (process.env.GOOGLE_METADATA_FOLDER_ID || "").trim();
+  if (pinned) return pinned;
+  return getSubFolderId(METADATA_FOLDER_NAME);
+}
+
+/**
+ * Check that the resolved metadata folder really is a usable folder.
+ * Called at boot so a wrong or deleted id is caught then, rather than showing
+ * up later as per-document metadata that silently never syncs.
+ */
+export async function verifyMetadataFolder() {
+  const pinned = !!(process.env.GOOGLE_METADATA_FOLDER_ID || "").trim();
+  try {
+    const id = await getMetadataFolderId();
+    const drive = getDrive();
+    const f = await drive.files.get({ fileId: id, fields: "id,name,mimeType,trashed" });
+    const isFolder = f.data.mimeType === "application/vnd.google-apps.folder";
+    if (!isFolder || f.data.trashed) {
+      return {
+        ok: false, id, pinned,
+        error: f.data.trashed ? "folder is in the trash" : `not a folder (${f.data.mimeType})`
+      };
+    }
+    return { ok: true, id, pinned, name: f.data.name };
+  } catch (e) {
+    return { ok: false, pinned, error: e.message };
+  }
+}
+
+// Fallback name lookup. Several folders can share a name, so take the OLDEST
+// match: it is stable across calls, and it is the folder holding the existing
+// doc-*.json history. Cached per process so every caller agrees within a run.
+const _subFolderIds = new Map();
+
+export async function getSubFolderId(name) {
+  if (_subFolderIds.has(name)) return _subFolderIds.get(name);
   const drive = getDrive();
   const parent = getFolderId();
   const q = `name='${name.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and '${parent}' in parents and trashed=false`;
-  const list = await drive.files.list({ q, fields: "files(id,name)", pageSize: 1 });
-  if (list.data.files?.[0]) return list.data.files[0].id;
+  const list = await drive.files.list({
+    q,
+    fields: "files(id,name,createdTime)",
+    orderBy: "createdTime",
+    pageSize: 10
+  });
+  const matches = list.data.files || [];
+  if (matches.length > 1) {
+    console.warn(
+      `[drive] ${matches.length} folders named "${name}" in the shared folder; ` +
+      `using the oldest (${matches[0].id}). Merge the duplicates in Drive to remove this warning.`
+    );
+  }
+  if (matches[0]) {
+    _subFolderIds.set(name, matches[0].id);
+    return matches[0].id;
+  }
   // Create if missing
   const r = await drive.files.create({
     requestBody: { name, mimeType: "application/vnd.google-apps.folder", parents: [parent] },
     fields: "id,name"
   });
+  _subFolderIds.set(name, r.data.id);
   return r.data.id;
 }
 
