@@ -60,6 +60,16 @@ test("departments and access tiers are as intended", () => {
   assert.equal(byName.get("Rajeev").role, "Microbiologist");
   assert.equal(byName.get("Surbhi").department, "Production");
   assert.equal(byName.get("Pawan").department, "HR");
+  assert.equal(byName.get("Pawan").role, "HR Officer");
+  assert.equal(byName.get("Ritika").role, "QA Officer");
+  assert.equal(byName.get("Ritika").email, "qualityassurance1.velite@gmail.com");
+});
+
+test("every new joiner is global, so they see both divisions", () => {
+  const { byName } = boot();
+  for (const n of ["Ritika", "Sachin", "Rajeev", "Surbhi", "Pawan"]) {
+    assert.equal(byName.get(n).division, "global", `${n} should be global`);
+  }
 });
 
 test("every roster entry has the fields the sign-in screen renders", () => {
@@ -103,9 +113,9 @@ test("people who left are removed, not left on the sign-in screen", () => {
 test("Ramna's seat is replaced by Ritika rather than both appearing", () => {
   const { users } = boot({ velite_users: OLD_ROSTER });
   assert.ok(!users.some((u) => u.email === "ramna@velite.com"));
-  const ritika = users.find((u) => u.email === "ritika@velite.com");
+  const ritika = users.find((u) => u.email === "qualityassurance1.velite@gmail.com");
   assert.ok(ritika, "Ritika must be present");
-  assert.equal(ritika.role, "QA Head");
+  assert.equal(ritika.role, "QA Officer");
   assert.equal(ritika.department, "Executive");
 });
 

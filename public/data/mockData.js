@@ -309,9 +309,10 @@ const initialUsers = [
     avatar: "SV",
     division: "global"
   },
-  // QA Heads — function under QA but granted Executive-tier rights
-  // (the role-gating system grants full access when department === "Executive";
-  // their role label reflects their actual QA leadership position).
+  // QA staff who function under QA but are granted Executive-tier rights.
+  // Access is decided by `department`, not `role`: department === "Executive"
+  // grants full access and the hat switcher. The role label below is display
+  // only and reflects their actual QA position.
   {
     email: "satwinder@velite.com",
     name: "Satwinder",
@@ -322,9 +323,9 @@ const initialUsers = [
   },
   {
     // Replaced Ramna (ramna@velite.com), who left in Oct 2026.
-    email: "ritika@velite.com",
+    email: "qualityassurance1.velite@gmail.com",
     name: "Ritika",
-    role: "QA Head",
+    role: "QA Officer",
     department: "Executive",
     avatar: "RI",
     division: "global"
