@@ -140,7 +140,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         "Production": "dept-prod",
         "Quality Control": "dept-qc",
         "Quality Assurance": "dept-qa",
-        "Executive": "dept-ceo"
+        "Executive": "dept-ceo",
+        "HR": "dept-hr"
       }[u.department] || "dept-qa";
 
       const item = document.createElement("div");
@@ -254,7 +255,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // CEO hat = no filter (see everything); QA/QC/Production = filter to that dept.
     state.activeHat = (hat === "CEO") ? null : hat;
     db.addAuditLog(user.name, `[SOLO-OPERATOR EXCEPTION] Hat switched to ${hat} role. AI Audited Exception logged.`, "System");
-    applyDepartmentVisibility(hat === "CEO" ? "Executive" : hat === "QC" ? "Quality Control" : hat === "QA" ? "Quality Assurance" : "Production");
+    applyDepartmentVisibility(hat === "CEO" ? "Executive" : hat === "QC" ? "Quality Control" : hat === "QA" ? "Quality Assurance" : hat === "HR" ? "HR" : "Production");
     // Re-render every visible data view so the hat filter takes effect immediately
     try { renderDocumentVault && renderDocumentVault(); } catch (_) {}
     try { renderDeviations && renderDeviations(); } catch (_) {}
@@ -297,8 +298,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     const showQA = (dept === "Quality Assurance" || dept === "Executive");
     document.querySelectorAll(".qa-only").forEach(el => el.style.display = showQA ? "block" : "none");
 
+    // HR dept: no Production/QC/QA navs, so only the untagged screens remain
+    // (Dashboard, Document Vault, Compliance Audit Log). That is deliberate —
+    // HR uploads its own documents and sees nothing from the other departments.
+
     // Buttons inside views for QA-only actions
     document.querySelectorAll(".qa-only-btn").forEach(el => el.style.display = showQA ? "inline-flex" : "none");
+
+    // Creating a document is allowed for QA/Executive AND for HR, which exists
+    // in this app purely to file its own department's records. The genuinely
+    // QA-only tools above (bulk re-tagging, restoring deleted documents) stay
+    // restricted — HR can add, not reorganise or undelete.
+    const showCreateDoc = showQA || dept === "HR";
+    document.querySelectorAll(".doc-create-btn").forEach(el => el.style.display = showCreateDoc ? "inline-flex" : "none");
     document.querySelectorAll(".qc-only-btn").forEach(el => el.style.display = showQC ? "inline-flex" : "none");
 
     // Division-specific navs handled in setDivision
@@ -430,7 +442,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     const matchesDivDoc = (d) => !d.division || d.division === "Both" || d.division === currentDivLabel;
     const matchesDivDev = (dv) => !dv.division || dv.division === "Both" || dv.division === currentDivLabel;
 
-    const docs = db.getDocuments().filter(matchesDivDoc);
+    // ★ HR counts only HR documents, matching what the vault shows them. Without
+    // this the dashboard tiles would report totals across every department.
+    const metricsDept = state.currentUser?.department || "";
+    const matchesOwnDeptDoc = (d) => metricsDept !== "HR" || d.department === "HR";
+
+    const docs = db.getDocuments().filter(matchesDivDoc).filter(matchesOwnDeptDoc);
     let expiring = 0, overdue = 0;
     docs.forEach(d => {
       const u = getRenewalUrgency(d.renewalDate);
@@ -742,9 +759,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     // ★ Hat filter (Fix #2): if user is Executive and switched hats, filter docs
     // to just that hat's department. CEO hat = no filter (see everything).
     const activeHat = state.activeHat || null;
-    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production" };
+    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production", "HR": "HR" };
     const hatDept = activeHat ? hatDeptMap[activeHat] : null;
     const matchesHat = (d) => !hatDept || d.department === hatDept;
+
+    // ★ HR sees only HR documents. This follows the account, not the hat
+    // switcher, so there is no way to widen it from inside the app.
+    const matchesOwnDept = (d) => dept !== "HR" || d.department === "HR";
 
     const sorted = [...docs].sort((a, b) => {
       const pri = { "Overdue": 3, "Expiring Soon": 2, "Active": 1, "No renewal": 0 };
@@ -755,6 +776,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const rows = sorted
       .filter(matchesDivision)
       .filter(matchesHat)
+      .filter(matchesOwnDept)
       .filter(d => !q || d.id.toLowerCase().includes(q) || d.title.toLowerCase().includes(q) || d.department.toLowerCase().includes(q))
       .map(d => {
         const u = getRenewalUrgency(d.renewalDate);
@@ -1188,7 +1210,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const allDevs = db.getDeviations();
     // Apply the same division + hat filter as the Document Vault
     const currentDivLabel = state.currentDivision === "cosmetics" ? "Healthcare" : "Pharmaceuticals";
-    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production" };
+    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production", "HR": "HR" };
     const hatDept = state.activeHat ? hatDeptMap[state.activeHat] : null;
     const devs = allDevs
       .filter(dv => !dv.division || dv.division === "Both" || dv.division === currentDivLabel)
