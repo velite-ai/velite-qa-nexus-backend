@@ -309,55 +309,57 @@ const initialUsers = [
     avatar: "SV",
     division: "global"
   },
-  {
-    email: "vikram.sen@velite.com",
-    name: "Vikram Sen",
-    role: "Supervisor",
-    department: "Production",
-    avatar: "VS",
-    division: "pharma"
-  },
-  {
-    email: "ramesh.kumar@velite.com",
-    name: "Ramesh Kumar",
-    role: "Operator",
-    department: "Production",
-    avatar: "RK",
-    division: "cosmetics"
-  },
-  {
-    email: "nivedita.rao@velite.com",
-    name: "Dr. Nivedita Rao",
-    role: "Analyst",
-    department: "Quality Control",
-    avatar: "NR",
-    division: "cosmetics"
-  },
-  {
-    email: "sharma.qa@velite.com",
-    name: "Rajesh Sharma",
-    role: "Manager",
-    department: "Quality Assurance",
-    avatar: "RS",
-    division: "pharma"
-  },
   // QA Heads — function under QA but granted Executive-tier rights
   // (the role-gating system grants full access when department === "Executive";
   // their role label reflects their actual QA leadership position).
-  {
-    email: "ramna@velite.com",
-    name: "Ramna",
-    role: "QA Head",
-    department: "Executive",
-    avatar: "RA",
-    division: "global"
-  },
   {
     email: "satwinder@velite.com",
     name: "Satwinder",
     role: "QA Head",
     department: "Executive",
     avatar: "SW",
+    division: "global"
+  },
+  {
+    // Replaced Ramna (ramna@velite.com), who left in Oct 2026.
+    email: "ritika@velite.com",
+    name: "Ritika",
+    role: "QA Head",
+    department: "Executive",
+    avatar: "RI",
+    division: "global"
+  },
+  {
+    email: "qc.velite@gmail.com",
+    name: "Sachin",
+    role: "Analyst",
+    department: "Quality Control",
+    avatar: "SC",
+    division: "global"
+  },
+  {
+    email: "micro.velite@gmail.com",
+    name: "Rajeev",
+    role: "Microbiologist",
+    department: "Quality Control",
+    avatar: "RJ",
+    division: "global"
+  },
+  {
+    email: "production2.velite@gmail.com",
+    name: "Surbhi",
+    role: "Officer",
+    department: "Production",
+    avatar: "SU",
+    division: "global"
+  },
+  {
+    // HR uploads its own department's documents and sees only those.
+    email: "gursingh.velite@gmail.com",
+    name: "Pawan",
+    role: "HR Officer",
+    department: "HR",
+    avatar: "PW",
     division: "global"
   }
 ];
@@ -413,26 +415,79 @@ if (!_VELITE_BACKEND_MODE) {
 if (!localStorage.getItem("velite_users")) {
   localStorage.setItem("velite_users", JSON.stringify(initialUsers));
 } else {
-  // Migration: ensure newly-added seed users (e.g. Ramna, Satwinder) appear
-  // for browsers where velite_users was seeded with an earlier version of
-  // initialUsers. We merge by email — existing users are never overwritten,
-  // only missing seed users are appended.
+  // Reconcile the sign-in roster against initialUsers above, which is the single
+  // source of truth for who may use the app. There is no UI for managing users,
+  // so staff changes are made by editing that list and deploying.
+  //
+  // This replaced an append-only migration that could add people but never
+  // rename or remove them, so someone who had left stayed on the sign-in screen
+  // on every browser that had already seeded.
+  //
+  // Reconciling means: add anyone missing, update the details of anyone whose
+  // email already exists, and drop anyone no longer on the list. Matching is by
+  // email, case-insensitively. Removing someone only takes them off the sign-in
+  // screen — their name stays on every audit-log entry and document they
+  // authored, which is what a GMP record requires.
   try {
-    const existing = JSON.parse(localStorage.getItem("velite_users")) || [];
-    const existingEmails = new Set(existing.map(u => (u.email || "").toLowerCase()));
-    let added = 0;
-    for (const seed of initialUsers) {
-      if (!existingEmails.has((seed.email || "").toLowerCase())) {
-        existing.push(seed);
-        added++;
-      }
+    const seeds = initialUsers;
+    // Guard against wiping the roster if the seed list is ever truncated by a
+    // bad edit or a partial file load.
+    if (!Array.isArray(seeds) || seeds.length < 3) {
+      throw new Error(`seed roster looks wrong (${seeds && seeds.length} entries) — leaving velite_users alone`);
     }
-    if (added > 0) {
-      localStorage.setItem("velite_users", JSON.stringify(existing));
-      console.log(`[Velite] Seeded ${added} new user(s) into velite_users.`);
+    // A corrupt or non-array value must not be left in place: getUsers() would
+    // hand it to the sign-in screen, which throws while rendering and leaves the
+    // sign-in button doing nothing. Treat anything unreadable as empty and let
+    // the seeds below rewrite it.
+    let existing = [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem("velite_users"));
+      if (Array.isArray(parsed)) existing = parsed.filter(u => u && typeof u === "object");
+      else console.warn("[Velite] velite_users was not an array — rebuilding from the roster.");
+    } catch (_) {
+      console.warn("[Velite] velite_users was unreadable — rebuilding from the roster.");
+    }
+    const byEmail = new Map(existing.map(u => [(u.email || "").toLowerCase(), u]));
+    const seedEmails = new Set(seeds.map(u => (u.email || "").toLowerCase()));
+
+    const added = [], updated = [], removed = [];
+    for (const seed of seeds) {
+      const key = (seed.email || "").toLowerCase();
+      const prev = byEmail.get(key);
+      if (!prev) { added.push(seed.name); continue; }
+      if (JSON.stringify({ ...prev, ...seed }) !== JSON.stringify(prev)) updated.push(seed.name);
+    }
+    for (const u of existing) {
+      if (!seedEmails.has((u.email || "").toLowerCase())) removed.push(u.name || u.email);
+    }
+
+    if (added.length || updated.length || removed.length) {
+      // Seed values win on every field, so a rename or a department change takes
+      // effect rather than being silently kept at the old value.
+      const reconciled = seeds.map(seed => ({
+        ...(byEmail.get((seed.email || "").toLowerCase()) || {}),
+        ...seed
+      }));
+      localStorage.setItem("velite_users", JSON.stringify(reconciled));
+      console.log(
+        `[Velite] Sign-in roster reconciled — added: [${added}], updated: [${updated}], removed: [${removed}].`
+      );
+      // Leave a trail in the audit log; a roster change is a controlled change.
+      try {
+        const logs = JSON.parse(localStorage.getItem("velite_audit_logs") || "[]");
+        logs.unshift({
+          timestamp: new Date().toLocaleString(),
+          user: "System",
+          action: `Sign-in roster reconciled to the deployed list. Added: ${added.join(", ") || "none"}. ` +
+                  `Updated: ${updated.join(", ") || "none"}. Removed from sign-in: ${removed.join(", ") || "none"}. ` +
+                  `Historical audit entries and document authorship are unchanged.`,
+          division: "System"
+        });
+        localStorage.setItem("velite_audit_logs", JSON.stringify(logs));
+      } catch (_) { /* the roster change itself must not fail on a log write */ }
     }
   } catch (e) {
-    console.warn("[Velite] User seed migration failed:", e);
+    console.warn("[Velite] User roster reconcile skipped:", e.message || e);
   }
 }
 if (!localStorage.getItem("velite_ai_knowledge")) {
