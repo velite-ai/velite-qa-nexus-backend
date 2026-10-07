@@ -247,15 +247,38 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadingView.style.display = "none";
   });
 
+  // ---- Hats -------------------------------------------------------------
+  // The single definition of what each hat means. Wearing one narrows the app
+  // to a single department: it filters the Document Vault and Deviations, and
+  // hides the nav items tagged for other departments.
+  //
+  // The CEO hat is deliberately absent — it means "no filter", and leaving it
+  // out of this map is what makes that fall out naturally everywhere.
+  //
+  // Adding a hat means adding it HERE and as an <option> in index.html's
+  // #operator-hat-select. It previously had to be added in three separate
+  // places in this file, which is why they drifted. test/hats.test.js now
+  // checks the map and the dropdown stay in step.
+  const CEO_HAT = "CEO";
+  const HAT_DEPARTMENTS = {
+    "Production":   "Production",
+    "QC":           "Quality Control",
+    "QA":           "Quality Assurance",
+    "HR":           "HR",
+    "Microbiology": "Microbiology",
+    "Warehouse":    "Warehouse",
+    "Engineering":  "Engineering"
+  };
+
   // Hat switcher (solo-operator mode)
   window.switchOperatorHat = function() {
     const hat = document.getElementById("operator-hat-select").value;
     const user = state.currentUser;
     // ★ Record active hat in state so every render function can filter by it.
-    // CEO hat = no filter (see everything); QA/QC/Production = filter to that dept.
-    state.activeHat = (hat === "CEO") ? null : hat;
+    // CEO hat = no filter (see everything); every other hat filters to its dept.
+    state.activeHat = (hat === CEO_HAT) ? null : hat;
     db.addAuditLog(user.name, `[SOLO-OPERATOR EXCEPTION] Hat switched to ${hat} role. AI Audited Exception logged.`, "System");
-    applyDepartmentVisibility(hat === "CEO" ? "Executive" : hat === "QC" ? "Quality Control" : hat === "QA" ? "Quality Assurance" : hat === "HR" ? "HR" : "Production");
+    applyDepartmentVisibility(hat === CEO_HAT ? "Executive" : (HAT_DEPARTMENTS[hat] || "Production"));
     // Re-render every visible data view so the hat filter takes effect immediately
     try { renderDocumentVault && renderDocumentVault(); } catch (_) {}
     try { renderDeviations && renderDeviations(); } catch (_) {}
@@ -309,7 +332,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     // in this app purely to file its own department's records. The genuinely
     // QA-only tools above (bulk re-tagging, restoring deleted documents) stay
     // restricted — HR can add, not reorganise or undelete.
-    const showCreateDoc = showQA || dept === "HR";
+    // Departments that may FILE a document but not re-tag or undelete one.
+    // HR is a real account. Microbiology, Warehouse and Engineering have no
+    // accounts at all — they exist only as hats, so the only person who can be
+    // wearing one is already an Executive. Letting them file from inside the
+    // hat saves switching back to CEO, and widens nothing: no sign-in carries
+    // these departments.
+    const DOC_FILING_DEPARTMENTS = ["HR", "Microbiology", "Warehouse", "Engineering"];
+    const showCreateDoc = showQA || DOC_FILING_DEPARTMENTS.indexOf(dept) !== -1;
     document.querySelectorAll(".doc-create-btn").forEach(el => el.style.display = showCreateDoc ? "inline-flex" : "none");
     document.querySelectorAll(".qc-only-btn").forEach(el => el.style.display = showQC ? "inline-flex" : "none");
 
@@ -759,7 +789,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     // ★ Hat filter (Fix #2): if user is Executive and switched hats, filter docs
     // to just that hat's department. CEO hat = no filter (see everything).
     const activeHat = state.activeHat || null;
-    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production", "HR": "HR" };
+    const hatDeptMap = HAT_DEPARTMENTS;
     const hatDept = activeHat ? hatDeptMap[activeHat] : null;
     const matchesHat = (d) => !hatDept || d.department === hatDept;
 
@@ -1210,7 +1240,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const allDevs = db.getDeviations();
     // Apply the same division + hat filter as the Document Vault
     const currentDivLabel = state.currentDivision === "cosmetics" ? "Healthcare" : "Pharmaceuticals";
-    const hatDeptMap = { "QA": "Quality Assurance", "QC": "Quality Control", "Production": "Production", "HR": "HR" };
+    const hatDeptMap = HAT_DEPARTMENTS;
     const hatDept = state.activeHat ? hatDeptMap[state.activeHat] : null;
     const devs = allDevs
       .filter(dv => !dv.division || dv.division === "Both" || dv.division === currentDivLabel)
