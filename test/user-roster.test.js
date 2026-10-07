@@ -153,3 +153,43 @@ test("documents, deviations and batches are still not seeded in backend mode", (
     assert.equal(localStorage.getItem(k), null, `${k} must come from Drive, not the mock seed`);
   }
 });
+
+// ---- the roster must survive the Drive pull ---------------------------------
+//
+// mockData.js reconciles velite_users synchronously on load; the adapter's
+// hydration finishes a moment later, after its network round-trip. When that
+// hydration wrote velite_users from Drive it undid the reconcile on every page
+// load, so a staff change deployed and then silently reverted. These guard the
+// fix structurally — the hydration loop lives in a browser IIFE with network
+// calls, which is not worth standing up a fake DOM for.
+
+import { readFileSync as _read } from "node:fs";
+const adapter = _read(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "public", "backend-adapter.js"),
+  "utf8"
+);
+
+test("hydration skips velite_users, so the deployed roster is not overwritten", () => {
+  assert.match(
+    adapter,
+    /if \(k === "velite_users"\) continue;/,
+    "the Drive pull must not write velite_users, or staff changes revert on every load"
+  );
+});
+
+test("the skip sits inside the hydration key loop, not somewhere inert", () => {
+  const loop = adapter.match(/for \(const \[k, v\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/);
+  assert.ok(loop, "the hydration key loop should still exist");
+  assert.ok(
+    loop[0].includes('if (k === "velite_users") continue;'),
+    "the velite_users skip must be inside the loop that writes keys to localStorage"
+  );
+});
+
+test("the skip comes before any write, so no path can still set it", () => {
+  const loop = adapter.match(/for \(const \[k, v\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/)[0];
+  const skipAt = loop.indexOf('if (k === "velite_users") continue;');
+  const firstWriteAt = loop.indexOf("localStorage.setItem");
+  assert.ok(skipAt !== -1 && firstWriteAt !== -1);
+  assert.ok(skipAt < firstWriteAt, "the skip must precede every localStorage write in the loop");
+});
