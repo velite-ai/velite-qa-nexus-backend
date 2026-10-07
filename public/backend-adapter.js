@@ -408,6 +408,23 @@
         // wiped your own attachment out of localStorage — the upload appeared
         // to vanish while you were looking at it. Merging keeps any attachment
         // this browser holds that the shared copy has not caught up with yet.
+        // ★ velite_users is NEVER taken from Drive.
+        //
+        // The sign-in roster is owned by initialUsers in mockData.js — the
+        // deployed code, identical in every browser — and mockData.js
+        // reconciles localStorage to it on load. Hydration used to overwrite
+        // that a moment later with Drive's copy, which still held whatever
+        // roster was current when it was last pushed. Staff changes therefore
+        // appeared to deploy and then silently revert on every page load:
+        // people who had left came back, new joiners vanished.
+        //
+        // Skipping the key here is what makes the reconcile stick, and it
+        // removes the load-order race between this async pull and the
+        // synchronous reconcile in mockData.js — neither order can now lose.
+        // collectAppData still pushes the reconciled roster up, so Drive
+        // catches up on its own.
+        if (k === "velite_users") continue;
+
         if (k === "velite_documents" && merge) {
           try {
             const remote = JSON.parse(v || "[]");
