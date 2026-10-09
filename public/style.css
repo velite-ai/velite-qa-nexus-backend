@@ -1522,3 +1522,31 @@ button, input, select, textarea { outline: none; font-family: inherit; }
     padding: 30px;
   }
 }
+
+/* ---- Live sign-ins panel (dashboard) ---- */
+.presence-panel { margin: 0 0 22px; padding: 18px 20px; }
+.presence-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+.presence-head h3 { color:#fff; font-size:1rem; margin:0; }
+.presence-count {
+  margin-left:8px; padding:3px 10px; border-radius:999px; font-size:0.78rem; font-weight:600;
+  background:rgba(16,185,129,0.14); color:#34d399; border:1px solid rgba(16,185,129,0.3);
+}
+.presence-note { font-size:0.74rem; color:var(--text-muted); }
+.presence-row {
+  display:flex; align-items:center; gap:12px; padding:9px 0;
+  border-top:1px solid var(--glass-border);
+}
+.presence-row:first-child { border-top:none; }
+.presence-dot {
+  width:8px; height:8px; border-radius:50%; background:#34d399; flex:0 0 auto;
+  box-shadow:0 0 0 3px rgba(16,185,129,0.16);
+}
+.presence-who { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }
+.presence-who strong { color:#fff; font-size:0.88rem; }
+.presence-who span { color:var(--text-muted); font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.presence-dept { font-size:0.74rem; color:#93c5fd; white-space:nowrap; }
+.presence-since { font-size:0.74rem; color:var(--text-muted); white-space:nowrap; }
+.presence-empty { color:var(--text-muted); font-size:0.85rem; padding:6px 0; }
+@media (max-width: 640px) {
+  .presence-dept, .presence-since { display:none; }
+}

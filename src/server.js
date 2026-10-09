@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import * as db from "./db.js";
 import * as drive from "./drive.js";
 import { mergeBackupPayload } from "./merge.js";
+import * as presence from "./presence.js";
 import { requestDeviceApproval, verifyDeviceOtp, isDeviceApproved, generateDeviceId } from "./auth.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -289,6 +290,38 @@ app.delete("/api/files/:fileId", requireApprovedDevice, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ============================================================
+// PRESENCE — who is signed in right now
+// ============================================================
+// Sign-in is a client-side account picker, so the server never learned which
+// person was using a device. Each signed-in browser now says so on a timer,
+// and the dashboard reads the live list back.
+
+app.post("/api/presence/heartbeat", requireApprovedDevice, (req, res) => {
+  try {
+    const { name, email, department } = req.body || {};
+    presence.heartbeat({
+      deviceId: req.deviceId,
+      name, email, department,
+      ip: clientIp(req)
+    });
+    res.json({ ok: true, ...presence.summary() });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Sent on sign-out and on tab close, so a browser drops off at once rather
+// than lingering until its heartbeats time out.
+app.post("/api/presence/signout", requireApprovedDevice, (req, res) => {
+  presence.signOut(req.deviceId);
+  res.json({ ok: true, ...presence.summary() });
+});
+
+app.get("/api/presence", requireApprovedDevice, (req, res) => {
+  res.json({ heartbeatMs: presence.HEARTBEAT_MS, ...presence.summary() });
 });
 
 // ============================================================

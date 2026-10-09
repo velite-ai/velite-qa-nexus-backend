@@ -201,6 +201,34 @@
       });
       return r.ok ? await r.json() : null;
     },
+    // ---- presence: who is signed in right now ----
+    presenceHeartbeat: async function (user) {
+      const r = await origFetch("/api/presence/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: user && user.name,
+          email: user && user.email,
+          department: user && user.department
+        }),
+        credentials: "include"
+      });
+      return r.ok ? await r.json() : null;
+    },
+    presenceSignOut: function () {
+      // keepalive lets this survive the page being closed, which is the whole
+      // point — otherwise a shut laptop lingers on the list until it times out.
+      try {
+        return origFetch("/api/presence/signout", {
+          method: "POST", credentials: "include", keepalive: true
+        });
+      } catch (_) { return Promise.resolve(); }
+    },
+    presenceList: async function () {
+      const r = await origFetch("/api/presence", { credentials: "include" });
+      return r.ok ? await r.json() : null;
+    },
+
     listDevices: async function () {
       const r = await origFetch("/api/admin/devices", { credentials: "include" });
       return r.ok ? await r.json() : null;

@@ -202,6 +202,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     db.addAuditLog(user.name, `Google Account authenticated. Department: ${user.department}. Division access granted.`, "System");
 
+    startPresence(user);
+
     setDivision(state.currentDivision);
     applyDepartmentVisibility(user.department);
     switchTab("dashboard");
@@ -238,6 +240,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   document.getElementById("btn-logout-nexus").addEventListener("click", () => {
+    stopPresence();
     state.loggedIn = false;
     state.currentUser = null;
     appBody.classList.add("locked-view");
@@ -246,6 +249,89 @@ document.addEventListener("DOMContentLoaded", async () => {
     accountsView.style.display = "none";
     loadingView.style.display = "none";
   });
+
+  // ---- Who is signed in right now ---------------------------------------
+  // Sign-in is a client-side account picker, so the server has no idea who is
+  // using a device unless the browser says so. Each signed-in browser checks
+  // in on a timer; the dashboard panel reads the live list back.
+  //
+  // Visible to everyone, not just Executives. Say the word and it becomes one
+  // line in renderPresence to restrict it.
+  let presenceBeat = null;
+  let presenceRefresh = null;
+  const PRESENCE_BEAT_MS = 30000;
+
+  function startPresence(user) {
+    stopPresence();
+    if (!window.veliteBackend?.presenceHeartbeat) return;
+    const beat = () => {
+      window.veliteBackend.presenceHeartbeat(user)
+        .then((r) => { if (r) paintPresence(r); })
+        .catch(() => {});
+    };
+    beat();
+    presenceBeat = setInterval(beat, PRESENCE_BEAT_MS);
+    // Refresh between our own beats so other people appearing and leaving shows
+    // up promptly rather than only when we check in.
+    presenceRefresh = setInterval(renderPresence, PRESENCE_BEAT_MS / 2);
+  }
+
+  function stopPresence() {
+    clearInterval(presenceBeat); presenceBeat = null;
+    clearInterval(presenceRefresh); presenceRefresh = null;
+    try { window.veliteBackend?.presenceSignOut?.(); } catch (_) {}
+  }
+
+  // A closed tab should drop off the list at once, not linger until its
+  // heartbeats time out. keepalive on the request is what makes this land.
+  window.addEventListener("pagehide", () => {
+    if (state.loggedIn) { try { window.veliteBackend?.presenceSignOut?.(); } catch (_) {} }
+  });
+
+  window.renderPresence = function() {
+    if (!window.veliteBackend?.presenceList) return;
+    window.veliteBackend.presenceList().then((r) => { if (r) paintPresence(r); }).catch(() => {});
+  };
+
+  function paintPresence(data) {
+    const panel = document.getElementById("presence-panel");
+    const countEl = document.getElementById("presence-count");
+    const listEl = document.getElementById("presence-list");
+    if (!panel || !countEl || !listEl) return;
+    panel.style.display = "block";
+
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const devices = data.devices || sessions.length;
+    const people = data.people || 0;
+    countEl.textContent = devices === 1
+      ? "1 computer"
+      : `${devices} computers` + (people && people !== devices ? ` · ${people} people` : "");
+
+    if (!sessions.length) {
+      listEl.innerHTML = `<div class="presence-empty">Nobody is signed in.</div>`;
+      return;
+    }
+    const me = state.currentUser?.email;
+    listEl.innerHTML = sessions.map((s) => {
+      const since = s.since ? new Date(s.since) : null;
+      const mine = me && s.email === me;
+      return `<div class="presence-row">
+        <span class="presence-dot"></span>
+        <div class="presence-who">
+          <strong>${escapeHtml(s.name || "Unknown")}${mine ? " (you)" : ""}</strong>
+          <span>${escapeHtml(s.email || "")}</span>
+        </div>
+        <span class="presence-dept">${escapeHtml(s.department || "")}</span>
+        <span class="presence-since">${since ? "since " + since.toLocaleTimeString() : ""}</span>
+      </div>`;
+    }).join("");
+  }
+
+  function escapeHtml(v) {
+    return String(v == null ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
   // ---- Hats -------------------------------------------------------------
   // The single definition of what each hat means. Wearing one narrows the app
