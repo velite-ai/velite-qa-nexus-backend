@@ -284,8 +284,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // A closed tab should drop off the list at once, not linger until its
   // heartbeats time out. keepalive on the request is what makes this land.
-  window.addEventListener("pagehide", () => {
+  //
+  // But pagehide also fires when the page enters the back/forward cache —
+  // navigating away and back, or a mobile app switch. event.persisted tells the
+  // two apart. Signing out on a bfcache hide made people disappear from the
+  // list while they were still working, because a frozen page runs no timers to
+  // put them back.
+  window.addEventListener("pagehide", (e) => {
+    if (e && e.persisted) return; // entering bfcache, not actually leaving
     if (state.loggedIn) { try { window.veliteBackend?.presenceSignOut?.(); } catch (_) {} }
+  });
+
+  // Browsers throttle timers hard in hidden tabs, so somebody working in
+  // another window can miss enough heartbeats to look offline while the app is
+  // still open in front of them. Check in the moment the tab is looked at
+  // again, and refresh the list so whoever is reading it sees the truth at once.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !state.loggedIn) return;
+    if (!window.veliteBackend || !window.veliteBackend.presenceHeartbeat) return;
+    window.veliteBackend.presenceHeartbeat(state.currentUser)
+      .then((r) => { if (r) paintPresence(r); })
+      .catch(() => {});
   });
 
   window.renderPresence = function() {

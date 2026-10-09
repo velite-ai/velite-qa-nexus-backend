@@ -122,3 +122,38 @@ test("the client is told how often to check in, so the two cannot drift", async 
   const clientMs = Number(app.match(/const PRESENCE_BEAT_MS = (\d+)/)[1]);
   assert.equal(clientMs, HEARTBEAT_MS, "client beat interval must match the server's expectation");
 });
+
+// ---- the heartbeat must survive normal browser behaviour -------------------
+//
+// Two ways a person who is still working can wrongly drop off the list. Both
+// are browser event handling, so they are checked structurally rather than by
+// standing up a DOM.
+
+test("entering the back/forward cache does not sign you out", async () => {
+  const app = await import("node:fs").then((fs) =>
+    fs.readFileSync(join(ROOT, "public", "app.js"), "utf8")
+  );
+  const handler = app.match(/addEventListener\("pagehide"[\s\S]*?\n  \}\);/);
+  assert.ok(handler, "a pagehide handler should exist so a closed tab drops off at once");
+  assert.match(
+    handler[0],
+    /persisted\)\s*return/,
+    "pagehide fires for bfcache too; signing out there removes people who are still working"
+  );
+  const signOutAt = handler[0].indexOf("presenceSignOut");
+  const guardAt = handler[0].indexOf("persisted");
+  assert.ok(guardAt !== -1 && guardAt < signOutAt, "the bfcache guard must come before the sign-out");
+});
+
+test("returning to a backgrounded tab checks in immediately", async () => {
+  const app = await import("node:fs").then((fs) =>
+    fs.readFileSync(join(ROOT, "public", "app.js"), "utf8")
+  );
+  // Browsers throttle timers in hidden tabs below our beat interval, so the
+  // timer alone is not enough to keep a working colleague on the list.
+  const handlers = [...app.matchAll(/addEventListener\("visibilitychange"[\s\S]{0,600}?\n  \}\);/g)];
+  assert.ok(
+    handlers.some((h) => /presenceHeartbeat/.test(h[0])),
+    "a visibilitychange handler should send a heartbeat when the tab becomes visible"
+  );
+});
