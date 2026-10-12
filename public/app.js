@@ -2027,7 +2027,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     const overdue = docs.filter(d => getRenewalUrgency(d.renewalDate).label === "Overdue").length;
     const openDev = devs.filter(d => d.status !== "Closed").length;
 
-    const thought = `[Velite Cognitive Engine — System Analysis]\n\nScanning active knowledge vectorbase...\n→ Found ${kb.length} trained quality resolution vectors.\n\nAnalyzing quality system health...\n→ ${docs.length} SOPs indexed. ${overdue} overdue for renewal.\n→ ${openDev} open deviations require CAPA follow-up.\n\nCross-referencing with known deviation patterns...\n→ Temperature excursion patterns: 1 match found (KB-001)\n→ Viscosity drop patterns: 1 match found (KB-002)\n\nSuggestion: Prioritize SOP renewal for SPEC-QC-088 and FORM-QC-102.\nSystem Health: ${overdue > 0 ? "ACTION REQUIRED" : "NOMINAL"}.`;
+    // Everything reported here is read from the live data. This block used to
+    // name KB-001 and KB-002 and two SOPs as scripted "matches"; those were
+    // prototype demo records that no longer exist, and a quality assistant
+    // asserting findings it has not made is worse than one with nothing to say.
+    const patterns = kb.length
+      ? kb.map(e => `→ ${e.issueType} (${e.id})`).join("\n")
+      : "→ No trained vectors yet. Approve a resolved deviation to train one.";
+    const overdueDocs = docs
+      .filter(d => getRenewalUrgency(d.renewalDate).label === "Overdue")
+      .slice(0, 3).map(d => d.id);
+    const suggestion = overdueDocs.length
+      ? `Suggestion: Prioritize SOP renewal for ${overdueDocs.join(", ")}${overdue > overdueDocs.length ? ` and ${overdue - overdueDocs.length} more` : ""}.`
+      : "Suggestion: No document is past its renewal date.";
+
+    const thought = `[Velite Cognitive Engine — System Analysis]\n\nScanning active knowledge vectorbase...\n→ Found ${kb.length} trained quality resolution vectors.\n\nAnalyzing quality system health...\n→ ${docs.length} SOPs indexed. ${overdue} overdue for renewal.\n→ ${openDev} open deviations require CAPA follow-up.\n\nTrained deviation patterns...\n${patterns}\n\n${suggestion}\nSystem Health: ${overdue > 0 ? "ACTION REQUIRED" : "NOMINAL"}.`;
 
     triggerAiThought(thought);
 
@@ -2037,7 +2051,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       suggestions.innerHTML += `<div class="ai-suggestion-item"><strong>📄 SOP Renewal Required</strong><p>${overdue} document(s) are overdue for renewal. Immediate QA action recommended to maintain compliance posture.</p><button class="btn-renew" style="margin-top:6px;font-size:0.72rem" onclick="switchTab('documents')">Go to Document Vault</button></div>`;
     }
     if (openDev > 0) {
-      suggestions.innerHTML += `<div class="ai-suggestion-item"><strong>⚠️ Open Deviation Resolution</strong><p>${openDev} open deviation(s) require CAPA verification. Cross-referencing with KB-001 pattern suggests thermostat relay as primary suspect.</p></div>`;
+      // No scripted root cause here either — say what is open, and whether
+      // there is anything trained to compare it against.
+      const vectorNote = kb.length
+        ? `Cross-reference against the ${kb.length} trained vector(s) in the Training Center.`
+        : `No trained vectors to cross-reference yet.`;
+      suggestions.innerHTML += `<div class="ai-suggestion-item"><strong>⚠️ Open Deviation Resolution</strong><p>${openDev} open deviation(s) require CAPA verification. ${vectorNote}</p></div>`;
     }
     suggestions.innerHTML += `<div class="ai-suggestion-item"><strong>✦ AI Training Opportunity</strong><p>After verifying next deviation closure, approve for AI training to expand Cognitive Engine accuracy. Current vector density: ${kb.length} patterns.</p></div>`;
   }

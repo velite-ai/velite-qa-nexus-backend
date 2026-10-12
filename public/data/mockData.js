@@ -501,7 +501,7 @@ try {
   const strip = window.veliteStripDemoRecords;
   if (typeof strip === "function") {
     const removed = [];
-    for (const storeKey of ["velite_deviations", "velite_batches"]) {
+    for (const storeKey of window.veliteDemoStores || []) {
       const raw = localStorage.getItem(storeKey);
       if (raw === null) continue;
       const result = strip(storeKey, raw);

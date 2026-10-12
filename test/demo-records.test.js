@@ -1,6 +1,8 @@
-// Two deviations and two batches from the May 2026 prototype were still in the
-// live data, so the Pharmaceuticals dashboard reported one Open Deviation and
-// one BMR Quarantine that did not exist on the shop floor.
+// Eight records from the May 2026 prototype were still in the live data: two
+// deviations, two batches, two stability studies and two AI knowledge vectors.
+// They drove a phantom Open Deviation and BMR Quarantine on the Pharmaceuticals
+// dashboard, a phantom Stability Study on the Healthcare one, and gave the
+// assistant invented quality history to reason from.
 //
 // Removing them locally is not enough: they live in Drive's backup.json, and
 // the shim hydrates from Drive after mockData.js has already run, then again
@@ -133,8 +135,45 @@ test("unreadable or unexpected data is left exactly as found", () => {
   }
 });
 
-test("only deviations and batches are in scope", () => {
-  assert.deepEqual(Object.keys(table).sort(), ["velite_batches", "velite_deviations"]);
+test("exactly the four prototype stores are in scope", () => {
+  assert.deepEqual(Object.keys(table).sort(), [
+    "velite_ai_knowledge", "velite_batches", "velite_deviations", "velite_stability",
+  ]);
+  // Eight records in all, and the document vault is not among the stores.
+  const total = Object.values(table).reduce((n, spec) => n + spec.entries.length, 0);
+  assert.equal(total, 8);
+  assert.ok(!("velite_documents" in table), "the document vault must never be filtered by this");
+});
+
+test("the two prototype stability studies are removed", () => {
+  const real = { id: "STAB-2026-02", productName: "Clobetasol Cream", status: "Ongoing" };
+  const r = strip("velite_stability", JSON.stringify([
+    { id: "STAB-2026-01", productName: "Velite Glow Serum (Gold Edition)", status: "Ongoing" },
+    { id: "STAB-2025-08", productName: "Anti-Ageing Botanical Cream", status: "Completed" },
+    real,
+  ]));
+  assert.deepEqual(JSON.parse(r.json), [real], "a real ongoing study must survive");
+  assert.equal(r.removed.length, 2);
+});
+
+test("the two prototype AI knowledge vectors are removed", () => {
+  // These feed the assistant's answers, so a fabricated vector is worse than a
+  // wrong tile — it gets quoted back as approved quality history.
+  const real = { id: "KB-003", issueType: "Fill weight variation" };
+  const r = strip("velite_ai_knowledge", JSON.stringify([
+    { id: "KB-001", issueType: "Temperature excursion" },
+    { id: "KB-002", issueType: "Viscosity drop" },
+    real,
+  ]));
+  assert.deepEqual(JSON.parse(r.json), [real]);
+  assert.equal(r.removed.length, 2);
+});
+
+test("a real stability study or vector reusing a prototype identifier is kept", () => {
+  const study = { id: "STAB-2026-01", productName: "Betamethasone Ointment", status: "Ongoing" };
+  assert.deepEqual(JSON.parse(strip("velite_stability", JSON.stringify([study])).json), [study]);
+  const vector = { id: "KB-001", issueType: "Fill weight variation" };
+  assert.deepEqual(JSON.parse(strip("velite_ai_knowledge", JSON.stringify([vector])).json), [vector]);
 });
 
 // ---- the race that makes or breaks this -----------------------------------
@@ -165,6 +204,10 @@ test("mockData.js reuses the shim's table rather than keeping its own copy", () 
   assert.ok(!/"DEV-2026-004"\s*,\s*title:/.test(mockDataJs.slice(mockDataJs.indexOf("DEMO-RECORD PURGE"))),
     "the purge block should not restate the records it removes");
   assert.match(mockDataJs, /window\.veliteStripDemoRecords/, "it should call the shared stripper");
+  assert.match(mockDataJs, /window\.veliteDemoStores/,
+    "it should iterate the shared store list, so adding a store is a one-place edit");
+  assert.ok(!/for \(const storeKey of \[/.test(mockDataJs),
+    "mockData.js should not name the stores itself");
 });
 
 test("the legacy standalone seeds are stripped again after they are written", () => {
@@ -200,4 +243,30 @@ test("the audit entry is written once per session, not once per pull", () => {
   const writeAt = fn[0].indexOf("velite_audit_logs");
   assert.ok(guardAt !== -1, "the guard must be inside logDemoPurge");
   assert.ok(guardAt < writeAt, "the guard has to come before the audit write");
+});
+
+test("the AI panel no longer claims matches against the deleted vectors", () => {
+  // runAiSystemScan used to print "Temperature excursion patterns: 1 match found
+  // (KB-001)" and name two SOPs as renewal suggestions, all as fixed text. With
+  // the prototype vectors gone those lines would be asserting findings the
+  // assistant has not made, about records that no longer exist.
+  const appJs = readFileSync(join(ROOT, "app.js"), "utf8");
+  const scan = appJs.match(/function runAiSystemScan\(\)[\s\S]*?\n  \}\n/);
+  assert.ok(scan, "runAiSystemScan should exist");
+  // Comments may still name them; it is the generated text that must not.
+  const code = scan[0].split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  for (const ghost of ["KB-001", "KB-002", "SPEC-QC-088", "FORM-QC-102", "thermostat relay"]) {
+    assert.ok(!code.includes(ghost), `the scan should not hardcode ${ghost}`);
+  }
+  assert.match(scan[0], /kb\.map\(/, "trained patterns should be read from the vectorbase");
+  assert.match(scan[0], /overdueDocs/, "renewal suggestions should name real overdue documents");
+});
+
+test("an emptied vectorbase does not break the Training Center", () => {
+  // Removing both vectors leaves the store at [], which every reader has to
+  // cope with rather than rendering "undefined" or throwing.
+  const appJs = readFileSync(join(ROOT, "app.js"), "utf8");
+  const render = appJs.match(/window\.renderAiTrainingCenter = function[\s\S]*?\n  \};/);
+  assert.ok(render, "renderAiTrainingCenter should exist");
+  assert.match(render[0], /\|\|\s*`<tr><td colspan="6"/, "an empty vectorbase needs an empty-state row");
 });
