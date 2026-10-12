@@ -35,7 +35,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     pendingLineClearanceBatchId: null,
   };
 
-  const TODAY = new Date("2026-05-24");
+  // ---- System clock ---------------------------------------------------------
+  // Every date stamped on a quality record, and every renewal-urgency figure on
+  // the dashboard, must come from the real clock. GMP records have to carry the
+  // date the act actually happened (ALCOA+ "contemporaneous"), and a renewal
+  // alert measured against a fixed date stops alerting.
+  //
+  // Read fresh on each call so a browser left open overnight does not keep
+  // yesterday's date. todayISO() builds the date from the local calendar rather
+  // than toISOString(), which rolls back a day for anyone east of UTC in the
+  // early morning. todayDate() parses that back to UTC midnight, matching how
+  // the "YYYY-MM-DD" renewal dates stored on documents parse.
+  function todayISO() {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }
+  function todayDate() { return new Date(todayISO()); }
+  function todayYear() { return new Date().getFullYear(); }
+  // Exposed so the renewal rules can be checked from the console without a build.
+  window.veliteToday = todayISO;
 
   // ============================================================
   // CLAUDE AI API INTEGRATION
@@ -562,7 +580,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!renewalDateStr) return { label: "No renewal", class: "badge-active", scoreImpact: 0 };
     const renDate = new Date(renewalDateStr);
     if (isNaN(renDate.getTime())) return { label: "No renewal", class: "badge-active", scoreImpact: 0 };
-    const diffDays = Math.ceil((renDate - TODAY) / (1000 * 60 * 60 * 24));
+    const diffDays = Math.ceil((renDate - todayDate()) / (1000 * 60 * 60 * 24));
     if (diffDays < 0) return { label: "Overdue", class: "badge-overdue", scoreImpact: 20 };
     if (diffDays <= 60) return { label: "Expiring Soon", class: "badge-expiring", scoreImpact: 5 };
     return { label: "Active", class: "badge-active", scoreImpact: 0 };
@@ -599,7 +617,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const quarantined = db.getBatches().filter(b => b.division === "Pharmaceuticals" && b.status === "Quarantined").length;
       html = `
         <div class="kpi-card"><div class="kpi-info"><p>Active SOPs</p><h3>${docs.length}</h3><span>Total Quality Documents</span></div><div class="kpi-icon">📄</div></div>
-        <div class="kpi-card" style="border-left-color:var(--color-warning)"><div class="kpi-info"><p>Expiring / Overdue</p><h3 style="color:var(--color-warning)">${expiring + overdue}</h3><span>Needs Urgent Renewal</span></div><div class="kpi-icon" style="color:var(--color-warning)">⏳</div></div>
+        <div class="kpi-card kpi-clickable" style="border-left-color:var(--color-warning);cursor:pointer" title="Open the Document Vault — overdue documents are listed first" onclick="showUrgentDocuments()"><div class="kpi-info"><p>Expiring / Overdue</p><h3 style="color:var(--color-warning)">${expiring + overdue}</h3><span>Needs Urgent Renewal</span></div><div class="kpi-icon" style="color:var(--color-warning)">⏳</div></div>
         <div class="kpi-card" style="border-left-color:var(--color-danger)"><div class="kpi-info"><p>Open Deviations</p><h3 style="color:var(--color-danger)">${openDevs}</h3><span>Active CAPA Investigations</span></div><div class="kpi-icon" style="color:var(--color-danger)">⚠️</div></div>
         <div class="kpi-card"><div class="kpi-info"><p>BMR Quarantines</p><h3>${quarantined}</h3><span>Awaiting QA Release</span></div><div class="kpi-icon">🔐</div></div>
       `;
@@ -608,7 +626,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const stabs = db.getStability().filter(s => s.status === "Ongoing").length;
       html = `
         <div class="kpi-card"><div class="kpi-info"><p>Active Procedures</p><h3>${docs.length}</h3><span>Total Quality Documents</span></div><div class="kpi-icon">📄</div></div>
-        <div class="kpi-card" style="border-left-color:var(--color-warning)"><div class="kpi-info"><p>Expiring / Overdue</p><h3 style="color:var(--color-warning)">${expiring + overdue}</h3><span>Needs Urgent Renewal</span></div><div class="kpi-icon" style="color:var(--color-warning)">⏳</div></div>
+        <div class="kpi-card kpi-clickable" style="border-left-color:var(--color-warning);cursor:pointer" title="Open the Document Vault — overdue documents are listed first" onclick="showUrgentDocuments()"><div class="kpi-info"><p>Expiring / Overdue</p><h3 style="color:var(--color-warning)">${expiring + overdue}</h3><span>Needs Urgent Renewal</span></div><div class="kpi-icon" style="color:var(--color-warning)">⏳</div></div>
         <div class="kpi-card"><div class="kpi-info"><p>Sensory QCs Pending</p><h3>${pendingSensory}</h3><span>Awaiting Parameters</span></div><div class="kpi-icon">🔬</div></div>
         <div class="kpi-card"><div class="kpi-info"><p>Stability Studies</p><h3>${stabs}</h3><span>Active Chamber Batches</span></div><div class="kpi-icon">🧪</div></div>
       `;
@@ -616,13 +634,42 @@ document.addEventListener("DOMContentLoaded", async () => {
     kpiGrid.innerHTML = html;
   }
 
+  // The dashboard is a summary, but the urgent items on it are the ones most
+  // likely to need work right away. Both the Expiring / Overdue tile and the
+  // Urgent Quality Actions rows take you to the document itself rather than
+  // leaving you to search the vault for it by hand.
+  const jsAttr = (v) => String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+
+  window.openDocFromDashboard = function(docId) {
+    const doc = (db.getDocuments() || []).find(d => d.id === docId);
+    // Narrow the vault before switching to it, so switchTab's own render is
+    // already the filtered one and the full list never flashes past.
+    const search = document.getElementById("search-docs");
+    if (search) search.value = docId;
+    switchTab("documents");
+    if (doc) openDocumentModal(docId);
+    else showNotification(`${docId} is not in your Document Vault.`, "danger");
+  };
+
+  // The Expiring / Overdue tile opens the vault unfiltered — it already sorts
+  // Overdue first, then Expiring Soon.
+  window.showUrgentDocuments = function() {
+    const search = document.getElementById("search-docs");
+    if (search) search.value = "";
+    switchTab("documents");
+  };
+
   function renderDashboardLists() {
     // ★ Division filter — dashboard lists must reflect only current division.
     const currentDivLabel = state.currentDivision === "cosmetics" ? "Healthcare" : "Pharmaceuticals";
     const matchesDivDoc = (d) => !d.division || d.division === "Both" || d.division === currentDivLabel;
     const matchesDivDev = (dv) => !dv.division || dv.division === "Both" || dv.division === currentDivLabel;
 
-    const docs = db.getDocuments().filter(matchesDivDoc);
+    // ★ HR sees only HR documents here too, matching the KPI tiles and the vault.
+    const listDept = state.currentUser?.department || "";
+    const matchesOwnDeptDoc = (d) => listDept !== "HR" || d.department === "HR";
+
+    const docs = db.getDocuments().filter(matchesDivDoc).filter(matchesOwnDeptDoc);
     // Sort by renewal date; docs without a renewal date go to the end
     const sorted = [...docs].sort((a, b) => {
       const ta = a.renewalDate ? new Date(a.renewalDate).getTime() : Number.MAX_SAFE_INTEGER;
@@ -634,7 +681,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     sorted.slice(0, 6).forEach(d => {
       const u = getRenewalUrgency(d.renewalDate);
       score -= u.scoreImpact;
-      tableHtml += `<tr>
+      tableHtml += `<tr class="row-clickable" style="cursor:pointer" title="Open ${d.id} in the Document Vault to edit its renewal date" onclick="openDocFromDashboard('${jsAttr(d.id)}')">
         <td><strong style="color:var(--accent-color)">${d.id}</strong></td>
         <td>${d.title}</td>
         <td>${d.renewalDate || "—"}</td>
@@ -1152,7 +1199,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (wordFileObj) docs[idx].wordFile = wordFileObj;
         if (pdfFileObj) docs[idx].pdfFile = pdfFileObj;
         if (changes || oldVer !== version) {
-          docs[idx].history.unshift({ version, date: "2026-05-24", author: user, changes: changes || `Metadata updated. Version: v${oldVer} → v${version}` });
+          docs[idx].history.unshift({ version, date: todayISO(), author: user, changes: changes || `Metadata updated. Version: v${oldVer} → v${version}` });
         }
         savedDocRef = docs[idx];
         db.addAuditLog(user, `Modified quality document ${id} (v${version})${wordFileObj?" + Word upload":""}${pdfFileObj?" + PDF upload":""}`, state.currentDivision);
@@ -1168,7 +1215,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const newDoc = { id, title, category, department, version, status, division, effectiveDate: effDate, renewalDate: renDate, owner: user,
         wordFile: wordFileObj,
         pdfFile: pdfFileObj,
-        history: [{ version, date: "2026-05-24", author: user, changes: changes || "Initial document registration." }]
+        history: [{ version, date: todayISO(), author: user, changes: changes || "Initial document registration." }]
       };
       docs.push(newDoc);
       savedDocRef = newDoc;
@@ -1281,7 +1328,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (doc && doc.renewalDate) {
           dateEl.value = doc.renewalDate;
         } else {
-          const t = new Date("2026-05-24"); t.setFullYear(t.getFullYear() + 2);
+          const t = todayDate(); t.setUTCFullYear(t.getUTCFullYear() + 2);
           dateEl.value = t.toISOString().split("T")[0];
         }
       }
@@ -1309,22 +1356,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       // Validate date and ensure it's in the future
       const md = new Date(manual);
       if (isNaN(md.getTime())) { showNotification("Invalid renewal date.", "danger"); return; }
-      if (md <= TODAY) {
+      if (md <= todayDate()) {
         if (!window.confirm(`The renewal date ${manual} is today or in the past. Continue anyway?`)) return;
       }
       newDate = manual;
     } else {
       const months = parseInt(targetVal, 10);
-      const base = new Date(docs[idx].renewalDate) < TODAY ? new Date("2026-05-24") : new Date(docs[idx].renewalDate);
-      base.setMonth(base.getMonth() + months);
+      // An already-lapsed document is extended from today, not from the date it
+      // lapsed, so the new cycle starts now.
+      const base = new Date(docs[idx].renewalDate) < todayDate() ? todayDate() : new Date(docs[idx].renewalDate);
+      base.setUTCMonth(base.getUTCMonth() + months);
       newDate = base.toISOString().split("T")[0];
     }
     const oldVer = docs[idx].version;
     docs[idx].version = newVer;
     docs[idx].status = newStatus;
     docs[idx].renewalDate = newDate;
-    docs[idx].effectiveDate = "2026-05-24";
-    docs[idx].history.unshift({ version: newVer, date: "2026-05-24", author: state.currentUser?.name || "QA Manager", changes: comment || `QA renewal. v${oldVer} → v${newVer}. Next renewal: ${newDate}` });
+    docs[idx].effectiveDate = todayISO();
+    docs[idx].history.unshift({ version: newVer, date: todayISO(), author: state.currentUser?.name || "QA Manager", changes: comment || `QA renewal. v${oldVer} → v${newVer}. Next renewal: ${newDate}` });
     db.saveDocuments(docs);
     db.addAuditLog(state.currentUser?.name || "QA Manager", `Renewal authorized for ${docId}. v${newVer}. Next renewal: ${newDate}`, state.currentDivision);
     // Push the renewal to per-doc Drive metadata — atomic single-doc write
@@ -1381,13 +1430,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   window.openDeviationModal = function() {
     const devs = db.getDeviations();
     const nextNum = devs.length + 1;
-    document.getElementById("dev-id-input").value = `DEV-2026-${String(nextNum).padStart(3, "0")}`;
+    document.getElementById("dev-id-input").value = `DEV-${todayYear()}-${String(nextNum).padStart(3, "0")}`;
     document.getElementById("dev-batch-input").value = "";
     document.getElementById("dev-title-input").value = "";
-    document.getElementById("dev-date-input").value = "2026-05-24";
+    document.getElementById("dev-date-input").value = todayISO();
     document.getElementById("dev-desc-input").value = "";
     ["whys-1","whys-2","whys-3","whys-4","whys-5","fb-man","fb-machine","fb-material","fb-method","dev-capa-action","dev-capa-assignee"].forEach(id => document.getElementById(id).value = "");
-    document.getElementById("dev-capa-due").value = "2026-06-07";
+    // CAPA target defaults to a fortnight out, as before.
+    const capaDue = todayDate(); capaDue.setUTCDate(capaDue.getUTCDate() + 14);
+    document.getElementById("dev-capa-due").value = capaDue.toISOString().split("T")[0];
     toggleRcaFields();
     document.getElementById("deviation-modal").classList.add("active");
   };
@@ -1525,7 +1576,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       rootCause: dev.rca.details,
       capa: dev.capa.action,
       approvedBy: state.currentUser?.name || "QA Manager",
-      timestamp: "2026-05-24"
+      timestamp: todayISO()
     });
     db.saveAiKnowledge(kb);
 
@@ -1702,7 +1753,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const division = state.currentDivision === "pharma" ? "Pharmaceuticals" : "Healthcare";
     const newBatch = {
       batchNo, productName: product, division,
-      mfgDate: "2026-05-24", expDate: "2028-05-24",
+      mfgDate: todayISO(), expDate: (() => { const e = todayDate(); e.setUTCFullYear(e.getUTCFullYear() + 2); return e.toISOString().split("T")[0]; })(),
       status: "Awaiting Line Clearance",
       lineClearance: { requested: true, approved: false, approvedBy: null, timestamp: new Date().toLocaleString() },
       compoundingLogged: false,
@@ -2291,7 +2342,7 @@ Base parameters on IP/USP for pharmaceuticals, or ISO 17516 / EU Cosmetics Regul
     if (document.getElementById("stab-cond-37").checked) conditions.push({ temp: "37°C", m1: "Pending", m2: "Pending", m3: "Pending", m6: "Pending" });
     if (document.getElementById("stab-cond-45").checked) conditions.push({ temp: "45°C / 75% RH", m1: "Pending", m2: "Pending", m3: "Pending", m6: "Pending" });
     const stabs = db.getStability();
-    stabs.push({ id: `STAB-2026-${String(stabs.length+1).padStart(2,"0")}`, productName: prod, batchNo: batch, startDate: "2026-05-24", conditions, status: "Ongoing", activeInterval: "Study Initiated" });
+    stabs.push({ id: `STAB-${todayYear()}-${String(stabs.length+1).padStart(2,"0")}`, productName: prod, batchNo: batch, startDate: todayISO(), conditions, status: "Ongoing", activeInterval: "Study Initiated" });
     db.saveStability(stabs);
     db.addAuditLog(state.currentUser?.name || "QC Analyst", `Stability study launched for ${prod} — ${batch}.`, state.currentDivision);
     closeStabilityModal();
@@ -2520,7 +2571,7 @@ Base parameters on IP/USP for pharmaceuticals, or ISO 17516 / EU Cosmetics Regul
       const kb = db.getAiKnowledge();
       const systemPrompt = `You are Velite AI, an expert GMP quality consultant embedded in the Velite Group QA-Nexus system.
 You help the QA/QC/Production team with: SOPs, deviations, CAPA, regulatory compliance (FDA 21 CFR Part 11, EU GMP, ISO 22716), batch manufacturing, pharmacopoeia (IP/USP), and quality systems.
-Current date: 2026-05-24. Division: ${state.currentDivision === "pharma" ? "Velite Pharmaceuticals" : "Velite Healthcare (Cosmetics)"}.
+Current date: ${todayISO()}. Division: ${state.currentDivision === "pharma" ? "Velite Pharmaceuticals" : "Velite Healthcare (Cosmetics)"}.
 Training vectorbase has ${kb.length} approved entries.
 Be concise, practical, and focused on pharma/cosmetics manufacturing context. Use plain text, no markdown symbols.`;
 
@@ -2602,7 +2653,7 @@ Be concise, practical, and focused on pharma/cosmetics manufacturing context. Us
 Your knowledge base contains the following approved training vectors:\n${kbSummary}\n
 Active deviations:\n${devSummary}\n
 Answer questions about deviation patterns, CAPA effectiveness, quality trends, and GMP compliance based on this data.
-Current date: 2026-05-24. Be concise and reference specific KB entries or deviation IDs where relevant.`;
+Current date: ${todayISO()}. Be concise and reference specific KB entries or deviation IDs where relevant.`;
 
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",

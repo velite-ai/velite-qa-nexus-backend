@@ -491,6 +491,33 @@ if (!localStorage.getItem("velite_users")) {
     console.warn("[Velite] User roster reconcile skipped:", e.message || e);
   }
 }
+// ★ DEMO-RECORD PURGE (local copy)
+// Clears the prototype demo deviations and batches out of this browser's own
+// localStorage. The list itself, and the matching rules, live in
+// backend-adapter.js, because the same stripping also has to be applied to the
+// copy coming back from Drive — doing it only here would be undone by the very
+// next hydrate. See the DEMO_SEED_RECORDS comment there for the full story.
+try {
+  const strip = window.veliteStripDemoRecords;
+  if (typeof strip === "function") {
+    const removed = [];
+    for (const storeKey of ["velite_deviations", "velite_batches"]) {
+      const raw = localStorage.getItem(storeKey);
+      if (raw === null) continue;
+      const result = strip(storeKey, raw);
+      if (result.removed.length) {
+        localStorage.setItem(storeKey, result.json);
+        removed.push(...result.removed);
+      }
+    }
+    if (removed.length && typeof window.veliteLogDemoPurge === "function") {
+      window.veliteLogDemoPurge(removed, "local storage");
+    }
+  }
+} catch (e) {
+  console.warn("[Velite] Demo-record purge skipped:", e.message || e);
+}
+
 if (!localStorage.getItem("velite_ai_knowledge")) {
   localStorage.setItem("velite_ai_knowledge", JSON.stringify(initialAiKnowledge));
 }
