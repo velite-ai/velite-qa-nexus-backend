@@ -2181,11 +2181,18 @@ Base parameters on IP/USP for pharmaceuticals, or ISO 17516 / EU Cosmetics Regul
   };
 
   function updateAiStats() {
-    const kb = db.getAiKnowledge();
+    const kb = db.getAiKnowledge() || [];
     const c1 = document.getElementById("ai-vector-count");
     const c2 = document.getElementById("ai-stat-vectors");
     if (c1) c1.textContent = `Active vectors: ${kb.length}`;
     if (c2) c2.textContent = kb.length;
+    // The markup used to state "26 Banned" as fixed text; the ingredient
+    // database holds 8 entries. Read the real figure.
+    const c3 = document.getElementById("ai-stat-banned");
+    if (c3) {
+      const rules = (db.getIngredientDB && db.getIngredientDB()) || [];
+      c3.textContent = `${rules.length} Banned`;
+    }
   }
 
   // ============================================================
