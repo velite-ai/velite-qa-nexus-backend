@@ -178,7 +178,7 @@ test("hydration skips velite_users, so the deployed roster is not overwritten", 
 });
 
 test("the skip sits inside the hydration key loop, not somewhere inert", () => {
-  const loop = adapter.match(/for \(const \[k, v\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/);
+  const loop = adapter.match(/for \(const \[k, \w+\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/);
   assert.ok(loop, "the hydration key loop should still exist");
   assert.ok(
     loop[0].includes('if (k === "velite_users") continue;'),
@@ -187,7 +187,7 @@ test("the skip sits inside the hydration key loop, not somewhere inert", () => {
 });
 
 test("the skip comes before any write, so no path can still set it", () => {
-  const loop = adapter.match(/for \(const \[k, v\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/)[0];
+  const loop = adapter.match(/for \(const \[k, \w+\] of Object\.entries\(dataObj\)\)[\s\S]*?\n      \}/)[0];
   const skipAt = loop.indexOf('if (k === "velite_users") continue;');
   const firstWriteAt = loop.indexOf("localStorage.setItem");
   assert.ok(skipAt !== -1 && firstWriteAt !== -1);

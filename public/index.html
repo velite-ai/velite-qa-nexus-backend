@@ -824,7 +824,7 @@
             <h3>Velite Cognitive AI - Quality Vectorbase</h3>
             <p>Review resolved deviations and formally approve training items for "Human-in-the-Loop" machine learning enhancements.</p>
           </div>
-          <div class="badge badge-active" id="ai-vector-count">Active vectors: 2</div>
+          <div class="badge badge-active" id="ai-vector-count">Active vectors: —</div>
         </div>
 
         <div class="table-wrapper" style="margin-top: 16px;">
@@ -904,27 +904,33 @@
         <div class="ai-actions-box">
           <h4 class="ai-box-title">Suggested Quality Recommendations</h4>
           <div class="ai-recommendations-list" id="ai-suggestions-list">
+            <!-- Placeholder only. runAiSystemScan() replaces this with findings
+                 read from the live data, so it must not state a finding of its
+                 own: it used to announce a completed system check and name a
+                 document as overdue that is not in this vault. Keep this text
+                 free of document ids and figures. -->
             <div class="ai-suggestion-item">
-              <strong>System Check Complete</strong>
-              <p>All active SOPs, BMR limits, and ingredient lists checked. Document SPEC-QC-088 is currently overdue; renewal verification suggested.</p>
+              <strong>No system check run yet</strong>
+              <p>Recommendations appear here once the Cognitive Engine has scanned the current quality data.</p>
               <button class="btn-renew" style="font-size: 0.75rem; padding: 4px 8px; margin-top: 6px;" onclick="switchTab('documents')">Go to Documents Vault</button>
             </div>
           </div>
         </div>
 
-        <!-- Local storage learning statistics -->
+        <!-- Local storage learning statistics.
+             Every figure here must be read from the live data by updateAiStats().
+             An "Accuracy Rating" of 99.8% used to sit alongside these; nothing in
+             the app measures accuracy, so it was an unsourced quality claim on a
+             GMP screen with nothing to substantiate it under audit. Do not add a
+             figure here that cannot be traced to a value the app computes. -->
         <div class="ai-stats-pane">
           <div>
             <span>Local Vectors</span>
-            <strong id="ai-stat-vectors">2</strong>
+            <strong id="ai-stat-vectors">—</strong>
           </div>
           <div>
             <span>OOS Rules Checked</span>
-            <strong>26 Banned</strong>
-          </div>
-          <div>
-            <span>Accuracy Rating</span>
-            <strong>99.8%</strong>
+            <strong id="ai-stat-banned">—</strong>
           </div>
         </div>
 

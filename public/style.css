@@ -2,6 +2,12 @@
 
 /* --- CUSTOM VARIABLES --- */
 :root {
+  /* The whole app is a dark theme, so tell the browser. Without this the
+     native controls inside <input type="date"> are drawn in light mode: the
+     calendar button is a near-black glyph sitting on a near-black field, so it
+     is invisible and the date looks un-editable even though it is not. */
+  color-scheme: dark;
+
   --font-heading: 'Outfit', sans-serif;
   --font-body: 'Plus Jakarta Sans', sans-serif;
   --transition-speed: 0.4s;
@@ -722,6 +728,24 @@ button, input, select, textarea { outline: none; font-family: inherit; }
 .input-glass:focus { border-color: var(--accent-color); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1); }
 .input-glass::placeholder { color: var(--text-muted); }
 
+/* Date fields. The calendar button is drawn by the browser, and `color-scheme:
+   dark` on :root is what makes it render white instead of near-black — do NOT
+   add a filter here to "brighten" it. Under a dark colour scheme the glyph is
+   already white, so inverting it turns it black again and puts back exactly the
+   invisible button this was meant to fix. Verified by screenshot in Chromium.
+   Everything below is affordance only: pointer and hover. */
+.input-glass[type="date"] { cursor: pointer; }
+.input-glass[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.9;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+.input-glass[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .textarea-glass {
   background: rgba(0,0,0,0.2);
   border: 1px solid var(--glass-border);
@@ -1183,7 +1207,9 @@ button, input, select, textarea { outline: none; font-family: inherit; }
 
 .ai-stats-pane {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  /* Fits however many readouts there are, so removing or adding one does not
+     leave a gap. */
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 8px;
   border-top: 1px solid rgba(124,58,237,0.2);
   padding-top: 12px;
@@ -1549,4 +1575,23 @@ button, input, select, textarea { outline: none; font-family: inherit; }
 .presence-empty { color:var(--text-muted); font-size:0.85rem; padding:6px 0; }
 @media (max-width: 640px) {
   .presence-dept, .presence-since { display:none; }
+}
+
+/* --- Clickable dashboard summary items ------------------------------------
+   The Expiring / Overdue tile and the Urgent Quality Actions rows navigate to
+   the document that needs the work, so they have to look clickable. */
+.table-glass tr.row-clickable:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.kpi-card.kpi-clickable {
+  transition: transform 0.2s var(--transition-bounce), box-shadow 0.2s ease;
+}
+.kpi-card.kpi-clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+.kpi-card.kpi-clickable:focus-visible,
+.table-glass tr.row-clickable:focus-visible {
+  outline: 2px solid var(--color-warning);
+  outline-offset: 2px;
 }

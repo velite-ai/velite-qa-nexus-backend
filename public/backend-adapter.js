@@ -29,6 +29,130 @@
   window.__VELITE_DEVICE_ID = DEVICE_ID;
 
   // --------------------------------------------------------
+  // Demo-record purge
+  // --------------------------------------------------------
+  // Eight records from the original May 2026 prototype are still in the shared
+  // data: two deviations, two batches, two stability studies and two AI
+  // knowledge vectors. They were seeded into a browser's localStorage back when
+  // the app ran on Vercel and seeded demo data, that browser pushed its whole
+  // state up to Drive, and every browser since has hydrated them back out of
+  // backup.json. mockData.js no longer seeds them, but that cannot remove the
+  // copy already in Drive.
+  //
+  // What they were driving:
+  //   - Pharmaceuticals, Open Deviations: 1  (DEV-2026-004, CAPA assigned to
+  //     someone who no longer has an account)
+  //   - Pharmaceuticals, BMR Quarantines: 1  (VP-BT-409)
+  //   - Healthcare, Stability Studies: 1     (STAB-2026-01)
+  //   - the AI's training vectorbase, which answers questions from KB-001/002
+  //
+  // None of it exists on the shop floor. A GMP dashboard must not advertise a
+  // deviation, a quarantined batch or a stability study that is not real, and
+  // the assistant must not reason from invented quality history.
+  //
+  // Stripping has to happen HERE, on the value as it arrives from Drive, not
+  // only in mockData.js. mockData.js runs synchronously while this shim is
+  // still awaiting device approval, so a purge done there alone would be undone
+  // by the hydrate that follows — and again by every 60-second background pull.
+  // This is the same race that used to revert the sign-in roster.
+  //
+  // Each record is matched on BOTH its identifier and its title, so a genuine
+  // future record that reuses an identifier is never touched. Once any browser
+  // pushes its stripped copy, Drive is clean and this becomes a no-op.
+  const DEMO_SEED_RECORDS = {
+    velite_deviations: {
+      key: "id",
+      label: "title",
+      entries: [
+        { id: "DEV-2026-004", title: "Temperature excursion in Incubator QC-INC-03 during stability study" },
+        { id: "DEV-2026-005", title: "Bulk mixing speed deviation during ointment batch manufacture" },
+      ],
+    },
+    velite_batches: {
+      key: "batchNo",
+      label: "productName",
+      entries: [
+        { batchNo: "VP-BT-409", productName: "Betamethasone Dipropionate Ointment (Drugs)" },
+        { batchNo: "VH-SHC-602", productName: "Ultra-Hydrating Cocoa Butter Cream (Cosmetics)" },
+      ],
+    },
+    velite_stability: {
+      key: "id",
+      label: "productName",
+      entries: [
+        { id: "STAB-2026-01", productName: "Velite Glow Serum (Gold Edition)" },
+        { id: "STAB-2025-08", productName: "Anti-Ageing Botanical Cream" },
+      ],
+    },
+    velite_ai_knowledge: {
+      key: "id",
+      label: "issueType",
+      entries: [
+        { id: "KB-001", issueType: "Temperature excursion" },
+        { id: "KB-002", issueType: "Viscosity drop" },
+      ],
+    },
+  };
+
+  // Returns { json, removed[] }. `json` is the input untouched when there is
+  // nothing to remove or the input cannot be read, so this can never corrupt a
+  // store it does not understand.
+  function stripDemoRecords(storeKey, rawJson) {
+    const spec = DEMO_SEED_RECORDS[storeKey];
+    if (!spec || rawJson == null) return { json: rawJson, removed: [] };
+    let rows;
+    try {
+      rows = JSON.parse(rawJson);
+    } catch (_) {
+      return { json: rawJson, removed: [] };
+    }
+    if (!Array.isArray(rows)) return { json: rawJson, removed: [] };
+
+    const isDemo = (row) =>
+      row && typeof row === "object" &&
+      spec.entries.some((demo) => row[spec.key] === demo[spec.key] && row[spec.label] === demo[spec.label]);
+
+    const removed = rows.filter(isDemo).map((row) => `${row[spec.key]} (${row[spec.label]})`);
+    if (!removed.length) return { json: rawJson, removed: [] };
+    return { json: JSON.stringify(rows.filter((row) => !isDemo(row))), removed };
+  }
+
+  // Record a removal in the audit log. A record leaving the system is a
+  // controlled change, so it leaves a trail.
+  //
+  // Once per browser session, not once per pull. Drive keeps handing these back
+  // until some browser pushes its stripped copy up, and the background pull runs
+  // every 60 seconds — logging each time would bury the audit trail under the
+  // same entry repeated all day.
+  let demoPurgeLogged = false;
+  function logDemoPurge(removed, where) {
+    if (!removed.length) return;
+    console.log(`[Velite] Demo records removed (${where}): ${removed.join("; ")}`);
+    if (demoPurgeLogged) return;
+    demoPurgeLogged = true;
+    try {
+      const logs = JSON.parse(localStorage.getItem("velite_audit_logs") || "[]");
+      logs.unshift({
+        timestamp: new Date().toLocaleString(),
+        user: "System",
+        action:
+          `Demonstration records removed from the live data: ${removed.join("; ")}. ` +
+          `These were prototype seed data carried over from the pre-migration build. They were never ` +
+          `real quality events; they were inflating the Open Deviations, BMR Quarantines and Stability ` +
+          `Studies counts and standing in the AI training vectorbase as if they were approved history.`,
+        division: "System",
+      });
+      localStorage.setItem("velite_audit_logs", JSON.stringify(logs));
+    } catch (_) { /* the purge itself must not fail on a log write */ }
+  }
+
+  // mockData.js reuses these for the copy already in localStorage. The store
+  // list travels with the table so adding a store here is the only edit needed.
+  window.veliteStripDemoRecords = stripDemoRecords;
+  window.veliteLogDemoPurge = logDemoPurge;
+  window.veliteDemoStores = Object.keys(DEMO_SEED_RECORDS);
+
+  // --------------------------------------------------------
   // Fake the Google Drive OAuth global BEFORE app.js runs
   // --------------------------------------------------------
   // The old app.js expects window.google.accounts.oauth2 to exist and expects
@@ -424,8 +548,20 @@
       }
       const merge = await getMergeRules();
       let changed = 0;
-      for (const [k, v] of Object.entries(dataObj)) {
+      for (const [k, rawValue] of Object.entries(dataObj)) {
         if (!k.startsWith("velite_")) continue;
+
+        // ★ Prototype demo records are dropped on the way in, so Drive's stale
+        // copy cannot put them back on the dashboard. See DEMO_SEED_RECORDS.
+        let v = rawValue;
+        if (DEMO_SEED_RECORDS[k]) {
+          const stripped = stripDemoRecords(k, rawValue);
+          if (stripped.removed.length) {
+            v = stripped.json;
+            logDemoPurge(stripped.removed, "incoming from Drive");
+          }
+        }
+
         const cur = localStorage.getItem(k);
         if (cur === v) continue;
 
