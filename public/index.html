@@ -917,7 +917,12 @@
           </div>
         </div>
 
-        <!-- Local storage learning statistics -->
+        <!-- Local storage learning statistics.
+             Every figure here must be read from the live data by updateAiStats().
+             An "Accuracy Rating" of 99.8% used to sit alongside these; nothing in
+             the app measures accuracy, so it was an unsourced quality claim on a
+             GMP screen with nothing to substantiate it under audit. Do not add a
+             figure here that cannot be traced to a value the app computes. -->
         <div class="ai-stats-pane">
           <div>
             <span>Local Vectors</span>
@@ -926,10 +931,6 @@
           <div>
             <span>OOS Rules Checked</span>
             <strong id="ai-stat-banned">—</strong>
-          </div>
-          <div>
-            <span>Accuracy Rating</span>
-            <strong>99.8%</strong>
           </div>
         </div>
 

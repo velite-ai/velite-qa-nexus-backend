@@ -85,3 +85,42 @@ test("updateAiStats survives an empty or unreadable vectorbase", () => {
   assert.match(update[0], /db\.getAiKnowledge\(\) \|\| \[\]/,
     "a null vectorbase must not throw on .length");
 });
+
+test("the stats pane shows no figure that is not read from the live data", () => {
+  // This is the general rule the SPEC-QC-088 line, the hardcoded vector counts,
+  // the "26 Banned" rule count and the 99.8% accuracy rating all broke. Each
+  // readout must carry an id that updateAiStats() fills, and must not ship a
+  // value baked into the markup.
+  const pane = indexHtml.match(/<div class="ai-stats-pane">[\s\S]*?\n        <\/div>/);
+  assert.ok(pane, "the stats pane should exist");
+
+  const update = appJs.match(/function updateAiStats\(\)[\s\S]*?\n  \}/)[0];
+  const readouts = [...pane[0].matchAll(/<strong([^>]*)>([^<]*)<\/strong>/g)];
+  assert.ok(readouts.length > 0, "there should be at least one readout");
+
+  for (const [, attrs, text] of readouts) {
+    const id = attrs.match(/id="([^"]+)"/);
+    assert.ok(id, `every readout needs an id so it can be filled: "${text}"`);
+    assert.ok(!/\d/.test(text), `"${text}" is baked into the markup, not read from data`);
+    assert.ok(update.includes(id[1]), `updateAiStats() does not fill ${id[1]}`);
+  }
+});
+
+test("the accuracy rating is gone, not just blanked", () => {
+  // Nothing in the app measures accuracy, so there is no honest value to show.
+  // A claim like this is what an auditor asks you to substantiate.
+  assert.ok(!/99\.8/.test(indexHtml.replace(/<!--[\s\S]*?-->/g, "")),
+    "the 99.8% figure must not appear in the markup");
+  assert.ok(!indexHtml.includes("<span>Accuracy Rating</span>"),
+    "the readout itself should be removed, not left empty");
+});
+
+test("the stats pane lays out for however many readouts it has", () => {
+  // It was a fixed three-column grid; removing a readout would have left a hole.
+  const styleCss = readFileSync(join(ROOT, "style.css"), "utf8");
+  const rule = styleCss.match(/\.ai-stats-pane \{[^}]*\}/);
+  assert.ok(rule, "the stats pane should have a layout rule");
+  assert.ok(!/grid-template-columns:\s*1fr 1fr 1fr/.test(rule[0]),
+    "a fixed three-column grid no longer matches the number of readouts");
+  assert.match(rule[0], /grid-template-columns:\s*repeat\(auto-fit/);
+});

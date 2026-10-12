@@ -1207,7 +1207,9 @@ button, input, select, textarea { outline: none; font-family: inherit; }
 
 .ai-stats-pane {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  /* Fits however many readouts there are, so removing or adding one does not
+     leave a gap. */
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 8px;
   border-top: 1px solid rgba(124,58,237,0.2);
   padding-top: 12px;
