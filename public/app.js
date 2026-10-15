@@ -52,6 +52,21 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   function todayDate() { return new Date(todayISO()); }
   function todayYear() { return new Date().getFullYear(); }
+
+  // ---- Document edit stamp --------------------------------------------------
+  // Marks a document as deliberately changed, just now. The sync merge uses
+  // this to decide which of two disagreeing copies is newer.
+  //
+  // Before this existed the merge had nothing to go on and resolved metadata by
+  // argument order, so a browser holding an old copy could overwrite a newer
+  // renewal date — which is exactly what kept undoing the QA team's work.
+  //
+  // ONLY a deliberate edit may call this. Sync code must never stamp, or a
+  // browser with a stale copy would restamp it on every pull and win forever.
+  function touchDoc(doc) {
+    if (doc && typeof doc === "object") doc.updatedAt = new Date().toISOString();
+    return doc;
+  }
   // Exposed so the renewal rules can be checked from the console without a build.
   window.veliteToday = todayISO;
 
@@ -897,6 +912,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     for (const d of docs) {
       if (filterFn(d) && d.division !== newDivision) {
         d.division = newDivision;
+        touchDoc(d);
         updated++;
       }
     }
@@ -1201,6 +1217,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (changes || oldVer !== version) {
           docs[idx].history.unshift({ version, date: todayISO(), author: user, changes: changes || `Metadata updated. Version: v${oldVer} → v${version}` });
         }
+        // Stamp every edit, including one that adds no history entry. Changing a
+        // renewal date without filling in "Changes" or bumping the version is a
+        // normal correction, and it used to leave no trace the merge could see.
+        touchDoc(docs[idx]);
         savedDocRef = docs[idx];
         db.addAuditLog(user, `Modified quality document ${id} (v${version})${wordFileObj?" + Word upload":""}${pdfFileObj?" + PDF upload":""}`, state.currentDivision);
       }
@@ -1217,6 +1237,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         pdfFile: pdfFileObj,
         history: [{ version, date: todayISO(), author: user, changes: changes || "Initial document registration." }]
       };
+      touchDoc(newDoc);
       docs.push(newDoc);
       savedDocRef = newDoc;
       db.addAuditLog(user, `Created quality document: ${id} - ${title}${wordFileObj?" (Word attached)":""}${pdfFileObj?" (PDF attached)":""}`, state.currentDivision);
@@ -1373,6 +1394,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     docs[idx].status = newStatus;
     docs[idx].renewalDate = newDate;
     docs[idx].effectiveDate = todayISO();
+    touchDoc(docs[idx]);
     docs[idx].history.unshift({ version: newVer, date: todayISO(), author: state.currentUser?.name || "QA Manager", changes: comment || `QA renewal. v${oldVer} → v${newVer}. Next renewal: ${newDate}` });
     db.saveDocuments(docs);
     db.addAuditLog(state.currentUser?.name || "QA Manager", `Renewal authorized for ${docId}. v${newVer}. Next renewal: ${newDate}`, state.currentDivision);
@@ -3093,6 +3115,7 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
           const res = await uploadFileToDrive(blob, driveName, f.type || blob.type);
           f.driveFileId = res.id;
           f.driveName = res.name;
+          touchDoc(doc);
           uploaded++; changed = true;
         } catch (e) { failed++; }
       }
@@ -3213,40 +3236,33 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
       }
       if (remoteDocs.length === 0) return { changed: false, reason: "empty" };
 
-      // Reuse existing union-by-id + pickRicherFile logic by hand
       const localArr = (function(){ try { return JSON.parse(localStorage.getItem("velite_documents") || "[]"); } catch (_) { return []; } })();
       const map = new Map();
       for (const it of localArr) if (it && it.id != null) map.set(it.id, it);
       let added = 0, updated = 0;
 
-      function pickRicher(a, b) {
-        if (!a) return b || null;
-        if (!b) return a || null;
-        const aObj = typeof a === "object", bObj = typeof b === "object";
-        if (aObj && !bObj) return a;
-        if (bObj && !aObj) return b;
-        if (aObj && bObj) {
-          const ta = a.uploadedAt || "", tb = b.uploadedAt || "";
-          if (ta > tb) return a;
-          if (tb > ta) return b;
-          if (a.driveFileId && !b.driveFileId) return a;
-          if (b.driveFileId && !a.driveFileId) return b;
-        }
-        return a;
-      }
-      const tsOf = (d) => (d.history && d.history[0] && d.history[0].date) || d.effectiveDate
-                       || (d.wordFile && d.wordFile.uploadedAt) || (d.pdfFile && d.pdfFile.uploadedAt) || "";
+      // ★ One merge rule for the whole app — the shared one in /merge.js.
+      //
+      // This used to be a second, hand-rolled copy that judged which side was
+      // fresher by the date of the newest version-history entry. Editing a
+      // renewal date adds no history entry (that only happens if you fill in
+      // "Changes" or bump the version), so an edited copy and a stale one
+      // reported the same date, and the tie-break handed the whole record to
+      // the per-document file. It overwrote the edit on every page load, which
+      // is why VP-QA006's renewal date had to be corrected three times and
+      // still read 2026-03-04. The shared rule compares updatedAt instead.
+      const merge = window.veliteBackend && window.veliteBackend.getMergeRules
+        ? await window.veliteBackend.getMergeRules()
+        : null;
 
       for (const r of remoteDocs) {
         if (!map.has(r.id)) { map.set(r.id, r); added++; continue; }
         const local = map.get(r.id);
-        const rt = tsOf(r), lt = tsOf(local);
-        let base;
-        if (rt > lt) base = { ...r };
-        else if (rt < lt) base = { ...local };
-        else base = { ...local, ...r };
-        base.wordFile = pickRicher(local.wordFile, r.wordFile);
-        base.pdfFile = pickRicher(local.pdfFile, r.pdfFile);
+        // local is the incoming/authoritative side. The per-document file is a
+        // backstop that fills gaps and restores attachments; it is never an
+        // authority that can override what this browser holds. Without the
+        // shared rule we keep local untouched, which is the safe direction.
+        const base = merge ? merge.mergeDocument(local, r) : local;
         if (JSON.stringify(base) !== JSON.stringify(local)) {
           map.set(r.id, base); updated++;
         }
@@ -3991,8 +4007,18 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
   // - Tie-break: pick the record with the newer "edited" timestamp.
   // - Audit log: append-only union (dedup by timestamp|user|action).
   // - ISO checks: OR-union (any checked-true survives).
-  function mergeRemoteData(remoteData) {
+  async function mergeRemoteData(remoteData) {
     const changes = [];
+
+    // ★ Documents go through the shared rule in /merge.js. The local copy of
+    // that logic below judged freshness by the newest version-history date,
+    // which does not change when someone edits a renewal date — so an edited
+    // document and a stale one tied, and the tie handed the whole record to the
+    // remote copy. The other four arrays keep the local rule: their timestamps
+    // (dateLogged, mfgDate, startDate) are real and do move when they change.
+    const sharedMerge = window.veliteBackend && window.veliteBackend.getMergeRules
+      ? await window.veliteBackend.getMergeRules()
+      : null;
 
     // Reconcile a single file slot (wordFile or pdfFile) when both sides have something.
     // Object beats string (real upload beats seed placeholder); newer uploadedAt beats older.
@@ -4021,7 +4047,7 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
       return { ...target, wordFile: newWord, pdfFile: newPdf };
     }
 
-    function mergeArrayById(localKey, idKey, getTs, label) {
+    function mergeArrayById(localKey, idKey, getTs, label, mergeFn) {
       const remoteArr = _tryParse(remoteData[localKey], []);
       if (!Array.isArray(remoteArr) || remoteArr.length === 0) return;
       // ★ For documents, tombstoned IDs must never be reintroduced from any source.
@@ -4040,16 +4066,24 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
         const k = it[idKey];
         if (!map.has(k)) { map.set(k, it); added++; continue; }
         const existing = map.get(k);
-        const rt = getTs(it) || "", lt = getTs(existing) || "";
-        // Pick the winner of the basic fields by timestamp, then ALWAYS reconcile file slots
-        // independently — a real upload (object with idbKey/driveFileId) must never be displaced
-        // by a placeholder string from seed data, regardless of which side is "newer overall".
         let base;
-        if (rt > lt) base = { ...it };
-        else if (rt < lt) base = { ...existing };
-        else base = { ...existing, ...it };
-        base.wordFile = pickRicherFile(existing.wordFile, it.wordFile);
-        base.pdfFile = pickRicherFile(existing.pdfFile, it.pdfFile);
+        if (mergeFn) {
+          // Remote is the incoming side here: this is the shared backup blob, so
+          // when neither copy carries an edit stamp the shared copy still wins
+          // and this browser catches up, exactly as before. A stamped local edit
+          // now outranks an unstamped remote copy, which is the fix.
+          base = mergeFn(it, existing);
+        } else {
+          const rt = getTs(it) || "", lt = getTs(existing) || "";
+          // Pick the winner of the basic fields by timestamp, then ALWAYS reconcile file slots
+          // independently — a real upload (object with idbKey/driveFileId) must never be displaced
+          // by a placeholder string from seed data, regardless of which side is "newer overall".
+          if (rt > lt) base = { ...it };
+          else if (rt < lt) base = { ...existing };
+          else base = { ...existing, ...it };
+          base.wordFile = pickRicherFile(existing.wordFile, it.wordFile);
+          base.pdfFile = pickRicherFile(existing.pdfFile, it.pdfFile);
+        }
         if (JSON.stringify(base) !== JSON.stringify(existing)) {
           map.set(k, base); updated++;
         }
@@ -4062,7 +4096,7 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
 
     const docTs = (d) => (d.history && d.history[0] && d.history[0].date) || d.effectiveDate
                        || (d.wordFile && d.wordFile.uploadedAt) || (d.pdfFile && d.pdfFile.uploadedAt) || "";
-    mergeArrayById("velite_documents", "id", docTs, "documents");
+    mergeArrayById("velite_documents", "id", docTs, "documents", sharedMerge && sharedMerge.mergeDocument);
     mergeArrayById("velite_deviations", "id", (d) => d.dateLogged || "", "deviations");
     mergeArrayById("velite_batches", "batchNo", (b) => b.mfgDate || "", "batches");
     mergeArrayById("velite_stability", "id", (s) => s.startDate || "", "stability");
@@ -4143,7 +4177,7 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
       const backup = await dlR.json();
       if (!backup || !backup.data) return { changed: false, reason: "invalid" };
 
-      const result = mergeRemoteData(backup.data);
+      const result = await mergeRemoteData(backup.data);
       localStorage.setItem("velite_cloud_lastpull", meta.modifiedTime);
       updateCloudStatus(); // refresh badge "Synced · X ago" timestamp immediately
 

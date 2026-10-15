@@ -8,8 +8,9 @@
 // went missing in Sept 2026.
 //
 // The rule enforced here: a push may add and update, but it may never erase
-// an attachment pointer it simply hadn't heard about yet. Deletion of a whole
-// document stays possible, but only through an explicit tombstone.
+// an attachment pointer it simply hadn't heard about yet, and it may never
+// overwrite metadata that was edited more recently than its own copy. Deletion
+// of a whole document stays possible, but only through an explicit tombstone.
 //
 // Used server-side by /api/data/backup. The browser adapter applies the same
 // rule when hydrating, so neither direction can drop an attachment.
@@ -56,11 +57,55 @@ export function mergeHistory(incoming, existing) {
   return extra.length ? [...a, ...extra] : a;
 }
 
-/** Merge one document record. Incoming wins on metadata; attachments are protected. */
+/**
+ * When a person last changed this document, as an ISO string, or "" if it has
+ * never been stamped.
+ *
+ * Only a deliberate edit sets `updatedAt`. Sync writes must never set it, or a
+ * browser holding a stale copy would restamp it on every pull and win forever.
+ */
+export function touchedAt(doc) {
+  const v = doc && doc.updatedAt;
+  return typeof v === "string" ? v : "";
+}
+
+/**
+ * Merge one document record.
+ *
+ * Attachments were already protected by pickAttachment. Metadata — renewal
+ * date, status, version, department, title — was not: it was resolved purely by
+ * argument order, so whichever side happened to be passed second won. That cost
+ * the QA team real work. A renewal date edited on 13 Oct 2026 was overwritten
+ * by an older copy and had to be redone three times.
+ *
+ * Metadata now follows `updatedAt`:
+ *   - both stamped   → the newer stamp wins
+ *   - one stamped    → the stamped side wins; a deliberate edit always beats a
+ *                      copy nobody has touched since the stamp was introduced
+ *   - neither        → incoming wins, exactly as before, so the ~930 documents
+ *                      carrying no stamp yet behave as they do today
+ *
+ * History is unioned and attachments keep their own rule, neither of which
+ * depends on which side won the metadata.
+ */
 export function mergeDocument(incoming, existing) {
   if (!existing) return incoming;
   if (!incoming) return existing;
-  const merged = { ...existing, ...incoming };
+
+  const inAt = touchedAt(incoming);
+  const exAt = touchedAt(existing);
+  let winner, loser;
+  if (inAt && exAt) {
+    // Equal stamps mean the same save, so either is correct; keep incoming for
+    // continuity with the previous behaviour.
+    [winner, loser] = inAt >= exAt ? [incoming, existing] : [existing, incoming];
+  } else if (exAt) {
+    [winner, loser] = [existing, incoming];
+  } else {
+    [winner, loser] = [incoming, existing];
+  }
+
+  const merged = { ...loser, ...winner };
   merged.wordFile = pickAttachment(incoming.wordFile, existing.wordFile);
   merged.pdfFile = pickAttachment(incoming.pdfFile, existing.pdfFile);
   const history = mergeHistory(incoming.history, existing.history);

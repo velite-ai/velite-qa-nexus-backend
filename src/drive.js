@@ -126,14 +126,33 @@ export async function listFolderContents(subFolderName = null) {
   return listFolderContentsById(parent);
 }
 
+/**
+ * Every file in a folder, following Drive's paging to the end.
+ *
+ * This used to ask for one page of 1000 and return it. The metadata folder now
+ * holds a doc-{id}.json for each of ~930 documents, plus duplicates, so it is
+ * at or past that limit — and a truncated listing is silently wrong in two
+ * ways: the per-document pull stops seeing some documents' metadata, and
+ * migrateLocalDocsToDriveMeta concludes the missing ones have no metadata file
+ * and writes a fresh one from whatever that browser happens to hold. That is
+ * how VP-QA006 ended up with four copies of doc-VP-QA006.json, one of which
+ * kept republishing a stale renewal date.
+ */
 export async function listFolderContentsById(folderId) {
   const drive = getDrive();
-  const list = await drive.files.list({
-    q: `'${folderId}' in parents and trashed=false`,
-    fields: "files(id,name,size,mimeType,modifiedTime)",
-    pageSize: 1000
-  });
-  return list.data.files || [];
+  const files = [];
+  let pageToken;
+  do {
+    const list = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: "nextPageToken, files(id,name,size,mimeType,modifiedTime)",
+      pageSize: 1000,
+      pageToken,
+    });
+    files.push(...(list.data.files || []));
+    pageToken = list.data.nextPageToken || undefined;
+  } while (pageToken);
+  return files;
 }
 
 // Where the per-document doc-{id}.json files live.
