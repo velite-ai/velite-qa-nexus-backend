@@ -941,8 +941,122 @@ document.addEventListener("DOMContentLoaded", async () => {
     showNotification(`✓ Bulk-tag complete: ${updated} document(s) set to "${newDivision}".`, "success");
   };
 
+  // ============================================================
+  // ATTACHMENT CONFLICTS
+  // ============================================================
+  // Until 15 Oct 2026 the upload form kept the previously chosen file, so
+  // creating a document straight after uploading to another one attached that
+  // same file again, silently. The form no longer does this, but it left 464 of
+  // 939 documents carrying a file that belongs to a different one — and nothing
+  // in the app said so, which is why it ran unnoticed from July.
+  //
+  // Two signals, both computed from what the vault already knows:
+  //   - the identical file (same original name and byte size) sits on more than
+  //     one document, so at most one of them can be right
+  //   - the file's name names a different document that exists in the vault
+  //
+  // A form's file named after its parent SOP is normal and is not flagged.
+  const _attCanon = (v) => String(v == null ? "" : v).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  // People type a letter O for a zero and an I for a one; fold them so a typed
+  // filename still reads as naming its own document.
+  const _attFold = (v) => _attCanon(v).replace(/O/g, "0").replace(/I/g, "1");
+  const _attStripExt = (n) => String(n || "").replace(/\.[A-Za-z0-9]{1,5}$/, "");
+  const _realFile = (f) => (f && typeof f === "object" && f.name) ? f : null;
+  const _fileKey = (f) => `${f.name}|${f.size}`;
+
+  /**
+   * Index the vault once, then answer both questions per document.
+   * Returns Map docId -> [plain-English note, ...]; absent means nothing wrong.
+   */
+  function attachmentConflicts(docs) {
+    const list = Array.isArray(docs) ? docs : [];
+
+    // Longest id first so VP-WH025-F04-00 is preferred over VP-WH025.
+    const folded = list
+      .filter((d) => d && d.id != null)
+      .map((d) => [_attFold(d.id), d.id])
+      .filter(([f]) => f.length >= 5)
+      .sort((a, b) => b[0].length - a[0].length);
+    const namesDoc = (filename) => {
+      const f = _attFold(_attStripExt(filename));
+      for (const [cid, id] of folded) if (f.includes(cid)) return id;
+      return null;
+    };
+    const related = (a, b) => {
+      const x = _attFold(a), y = _attFold(b);
+      return x.startsWith(y) || y.startsWith(x);
+    };
+
+    const byFile = new Map();
+    for (const d of list) {
+      if (!d || d.id == null) continue;
+      for (const slot of ["wordFile", "pdfFile"]) {
+        const f = _realFile(d[slot]);
+        if (!f) continue;
+        const k = _fileKey(f);
+        if (!byFile.has(k)) byFile.set(k, []);
+        if (!byFile.get(k).includes(d.id)) byFile.get(k).push(d.id);
+      }
+    }
+
+    const out = new Map();
+    for (const d of list) {
+      if (!d || d.id == null) continue;
+      const notes = [];
+      for (const slot of ["wordFile", "pdfFile"]) {
+        const f = _realFile(d[slot]);
+        if (!f) continue;
+        const kind = slot === "pdfFile" ? "PDF" : "Word";
+        const others = (byFile.get(_fileKey(f)) || []).filter((id) => id !== d.id);
+        if (others.length) {
+          const shown = others.slice(0, 5).join(", ");
+          notes.push(`${kind} file "${f.name}" is also attached to ${others.length} other document(s): ` +
+                     `${shown}${others.length > 5 ? `, +${others.length - 5} more` : ""}`);
+        }
+        const named = namesDoc(f.name);
+        if (named && !related(named, d.id)) {
+          notes.push(`${kind} file "${f.name}" is named after ${named}, not this document`);
+        }
+      }
+      if (notes.length) out.set(d.id, notes);
+    }
+    return out;
+  }
+  // Exposed so the whole vault can be checked from the console without a build.
+  window.veliteAttachmentConflicts = attachmentConflicts;
+
+  /**
+   * Spell out what is wrong with one document's attachments.
+   *
+   * A plain dialog rather than the corner notification: this is a list of
+   * document ids the reader needs to act on, and the notification is narrow and
+   * disappears on its own.
+   */
+  window.showAttachmentConflict = function(docId) {
+    const docs = db.getDocuments() || [];
+    const notes = attachmentConflicts(docs).get(docId);
+    const doc = docs.find((d) => d.id === docId);
+    if (!notes || !notes.length) {
+      showNotification(`${docId}: attachments look consistent.`, "success");
+      return;
+    }
+    window.alert(
+      `${docId} — ${doc ? doc.title : ""}\n\n` +
+      `This document's attachment may belong to another document:\n\n` +
+      notes.map((n, i) => `${i + 1}. ${n}`).join("\n\n") +
+      `\n\nUntil 15 Oct 2026 the upload form kept the file you picked for the ` +
+      `previous document, so a run of documents created in one sitting could ` +
+      `all end up with the first one's file. That is fixed, but the documents ` +
+      `created before then still need checking.\n\n` +
+      `If this file is wrong, use Edit SOP to upload the correct one.`
+    );
+  };
+
   window.renderDocumentVault = function() {
     const docs = db.getDocuments();
+    // Computed across the whole vault, so a document can be told that its file
+    // also sits on others. Indexed once here rather than per row.
+    const conflicts = attachmentConflicts(docs);
     const q = document.getElementById("search-docs").value.toLowerCase();
     // Role gate for destructive actions — only QA-class users see Delete
     const dept = state.currentUser?.department || "";
@@ -979,8 +1093,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       .map(d => {
         const u = getRenewalUrgency(d.renewalDate);
         const statusMap = { "Approved": "badge-approved", "In Review": "badge-review", "Draft": "badge-draft", "Under Revision": "badge-revision" };
+        const conflictNotes = conflicts.get(d.id);
+        const conflictBadge = conflictNotes
+          ? `<span class="badge badge-attach-warn" title="${escapeHtml(conflictNotes.join("\n"))}" onclick="showAttachmentConflict('${jsAttr(d.id)}')">⚠ Check file</span>`
+          : "";
         return `<tr>
-          <td><strong style="color:var(--accent-color)">${d.id}</strong></td>
+          <td><strong style="color:var(--accent-color)">${d.id}</strong>${conflictBadge}</td>
           <td><strong>${d.title}</strong></td>
           <td><span style="font-size:0.78rem;opacity:0.85">${d.category}</span></td>
           <td><span style="font-size:0.78rem">${d.department}</span></td>
@@ -1173,6 +1291,43 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const wf = wordInput.files[0], pf = pdfInput.files[0];
+
+    // ★ Ask before attaching a file that is already on another document.
+    //
+    // The form no longer carries a file over from the document before, but the
+    // same mistake can still be made by hand — picking the wrong file from a
+    // folder of similarly named ones. Matching on original name and byte size
+    // is what we can check before uploading anything; it is the same signal the
+    // vault's "Check file" badge uses.
+    //
+    // Warn, do not block: attaching one file to two documents is occasionally
+    // deliberate, and QA is better placed than the app to judge.
+    {
+      const existing = db.getDocuments() || [];
+      for (const [file, kind] of [[wf, "Word"], [pf, "PDF"]]) {
+        if (!file) continue;
+        const clash = [];
+        for (const d of existing) {
+          if (!d || d.id == null || String(d.id).toUpperCase() === id) continue;
+          for (const slot of ["wordFile", "pdfFile"]) {
+            const a = _realFile(d[slot]);
+            if (a && a.name === file.name && a.size === file.size) { clash.push(d.id); break; }
+          }
+        }
+        if (!clash.length) continue;
+        const shown = clash.slice(0, 8).join(", ") + (clash.length > 8 ? `, +${clash.length - 8} more` : "");
+        if (!window.confirm(
+          `"${file.name}" is already attached to ${clash.length} other document(s):\n\n${shown}\n\n` +
+          `Attaching the same file to more than one document is usually a mistake — ` +
+          `check this is the file that belongs to ${id}.\n\n` +
+          `Attach it as the ${kind} file anyway?`
+        )) {
+          showNotification(`Save cancelled — pick the correct ${kind} file for ${id}.`, "warning");
+          return;
+        }
+      }
+    }
+
     const driveOn = !!(window && typeof window === "object" && (function(){try{return !!gdriveAccessToken;}catch(_){return false;}})());
 
     // Store an uploaded File: put the Blob in IndexedDB (no size cap), then push to Drive if connected.
