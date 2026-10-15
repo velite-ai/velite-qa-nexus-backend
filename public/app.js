@@ -1054,6 +1054,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("modal-doc-changes").value = "";
     document.getElementById("modal-word-file-label").textContent = "";
     document.getElementById("modal-pdf-file-label").textContent = "";
+    // ★ The file inputs themselves, not just their labels.
+    //
+    // A browser keeps the chosen file in an <input type="file"> until something
+    // clears it. Every other field here was reset and these two were not, so
+    // after uploading a file to one document, creating the next one re-uploaded
+    // that same file: the form still held it and saveDocument reads
+    // wordInput.files[0] without asking whether the user picked it this time.
+    //
+    // Whole runs of documents ended up carrying one unrelated file. On
+    // 15 Oct 2026, VP-WH010's Word and PDF were attached to the sixteen QC test
+    // procedures created after it, over the following half hour.
+    clearDocFileInputs();
 
     if (docId) {
       const doc = db.getDocuments().find(d => d.id === docId);
@@ -1116,7 +1128,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     modal.classList.add("active");
   };
 
-  window.closeDocumentModal = () => document.getElementById("document-modal").classList.remove("active");
+  // Empty both upload fields. Reassigning .value is the only reliable way to
+  // clear a file input; setting .files is not writable in every browser.
+  function clearDocFileInputs() {
+    for (const id of ["modal-doc-word", "modal-doc-pdf"]) {
+      const el = document.getElementById(id);
+      if (el) { try { el.value = ""; } catch (_) {} }
+    }
+  }
+
+  window.closeDocumentModal = () => {
+    // Also on close, so a file can never outlive the form it was chosen in —
+    // whichever way the modal is next opened.
+    clearDocFileInputs();
+    document.getElementById("document-modal").classList.remove("active");
+  };
 
   window.saveDocument = async function() {
     const id = document.getElementById("modal-doc-id").value.trim().toUpperCase();
