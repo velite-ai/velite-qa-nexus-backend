@@ -523,6 +523,12 @@
     return _mergeRules;
   }
 
+  // app.js's per-document sync uses the same rules, so there is one merge rule
+  // for the whole app rather than a second hand-rolled copy that can drift.
+  // Attached here, after window.veliteBackend is assigned above — attaching it
+  // earlier would be wiped by that assignment.
+  window.veliteBackend.getMergeRules = getMergeRules;
+
   // Runs AFTER device approval but BEFORE app.js's DOMContentLoaded handler.
   // This is what makes the new domain (qa.velite.in) show the existing SOPs
   // that live in Drive's backup.json. Uses the original localStorage.setItem
