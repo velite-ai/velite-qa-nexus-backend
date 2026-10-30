@@ -3521,7 +3521,12 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
           id: docId,
           title: `[Recovered] SOP-${docId}`,
           category: "SOP",
-          department: "QA",
+          // "Quality Assurance", not "QA". The hat filter matches on the
+          // department name, and "QA" is the hat's own name, not a department —
+          // so a stub filed under it was invisible to every hat except CEO,
+          // which filters nothing. Nine recovered documents sat unreachable that
+          // way, among them VP-QA021, the out-of-specification procedure.
+          department: "Quality Assurance",
           version: "1.0",
           status: "Approved",
           effectiveDate: today,
@@ -4636,6 +4641,62 @@ Current date: ${todayISO()}. Be concise and reference specific KB entries or dev
   };
 
   // ============================================================
+  // ============================================================
+  // ONE-TIME DATA CORRECTIONS
+  // ============================================================
+  // Two corrections agreed with the CEO on 30 Oct 2026. Both run after
+  // hydration, so they apply to whatever Drive hands this browser, and both
+  // stamp updatedAt so the merge keeps them rather than a stale copy winning.
+  //
+  // Each is naturally idempotent: once applied, the records it looks for no
+  // longer exist, so a reload finds nothing and writes nothing.
+  function applyOneTimeCorrections() {
+    let docs;
+    try { docs = db.getDocuments(); } catch (_) { return; }
+    if (!Array.isArray(docs) || !docs.length) return;
+
+    // (a) Ramna has left. Ownership passes to Ritika.
+    //     Only `owner` moves — who is answerable for the document now. The
+    //     revision history keeps Ramna's name against the work she actually
+    //     did, which is what a GMP record requires.
+    const reowned = [];
+    for (const d of docs) {
+      if (d && d.owner === "Ramna") { d.owner = "Ritika"; touchDoc(d); reowned.push(d.id); }
+    }
+
+    // (b) Documents the self-healing routine recovered were filed under the
+    //     department "QA". That is a hat name, not a department, so no hat
+    //     matched them and they appeared only under the CEO hat. Filing them
+    //     under Quality Assurance puts them in front of the QA team.
+    const refiled = [];
+    for (const d of docs) {
+      if (d && d.department === "QA") { d.department = "Quality Assurance"; touchDoc(d); refiled.push(d.id); }
+    }
+
+    if (!reowned.length && !refiled.length) return;
+    db.saveDocuments(docs);
+
+    // A change of ownership or filing is a controlled change, so it is logged.
+    const who = state.currentUser?.name || "System";
+    if (reowned.length) {
+      db.addAuditLog(who,
+        `Document ownership transferred from Ramna to Ritika for ${reowned.length} document(s). ` +
+        `Revision history is unchanged and still records Ramna as the author of her own entries.`,
+        "Global");
+    }
+    if (refiled.length) {
+      db.addAuditLog(who,
+        `${refiled.length} document(s) re-filed from department "QA" to "Quality Assurance" ` +
+        `so the QA hat can see them: ${refiled.join(", ")}. They were previously reachable only ` +
+        `under the CEO hat.`,
+        "Global");
+    }
+    console.log(`[Velite] corrections applied — re-owned ${reowned.length}, re-filed ${refiled.length}`);
+    try { renderDocumentVault && renderDocumentVault(); } catch (_) {}
+    try { rebuildMetrics && rebuildMetrics(); } catch (_) {}
+  }
+  try { applyOneTimeCorrections(); } catch (e) { console.warn("[Velite] corrections skipped:", e); }
+
   // INIT: Boot application
   // ============================================================
   rebuildMetrics();
