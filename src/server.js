@@ -207,6 +207,13 @@ app.post("/api/data/backup", requireApprovedDevice, async (req, res) => {
       });
       return { r: written, stats: merged.stats, mergedPayload: merged.data };
     });
+    if (stats.auditWantsArchiving) {
+      console.warn(
+        `[/api/data/backup] audit trail is ${stats.auditEntries} entries and wants archiving. ` +
+        `NOTHING has been dropped — this is a prompt to move older entries to their own store, ` +
+        `not a truncation. The log rides inside backup.json, which every browser re-reads every 60s.`
+      );
+    }
     if (stats.attachmentsPreserved || stats.documentsRecovered) {
       console.log(
         `[/api/data/backup] stale push from ${req.deviceId.slice(0, 8)}: kept ` +
@@ -217,7 +224,8 @@ app.post("/api/data/backup", requireApprovedDevice, async (req, res) => {
       req.deviceId,
       "backup_pushed",
       `bytes=${JSON.stringify(mergedPayload).length} docs=${stats.documents} ` +
-      `attachmentsPreserved=${stats.attachmentsPreserved} documentsRecovered=${stats.documentsRecovered}`
+      `attachmentsPreserved=${stats.attachmentsPreserved} documentsRecovered=${stats.documentsRecovered} ` +
+      `auditEntries=${stats.auditEntries}`
     );
     res.json({ ok: true, ...r, ...stats });
   } catch (e) {
