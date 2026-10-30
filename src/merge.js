@@ -147,16 +147,47 @@ export function mergeTombstones(incoming, existing) {
   return Array.from(out.values());
 }
 
-/** Union two audit-log arrays, newest first, without dropping either side's entries. */
-export function mergeAuditLogs(incoming, existing, cap = 5000) {
+/**
+ * The point past which the audit log is large enough to want archiving. It does
+ * NOT truncate anything — it only decides when mergeAuditLogs reports its size,
+ * so growth gets noticed deliberately instead of through missing history.
+ */
+export const AUDIT_SOFT_LIMIT = 20000;
+
+/**
+ * Union two audit-log arrays, newest first, without dropping either side's entries.
+ *
+ * This used to end with `.slice(0, 5000)`. On 30 Oct 2026 the live log held 4,820
+ * entries and was growing by about 64 a day — roughly three working days from
+ * silently discarding its own oldest history, with nothing written down to say it
+ * had happened. An audit trail that quietly loses entries is a data-integrity
+ * finding in its own right: Revised Schedule M requires records to be complete and
+ * attributable, and ALCOA+ reads "Complete" as nothing deleted without a trace.
+ *
+ * So nothing is dropped here, at any size. When the log passes AUDIT_SOFT_LIMIT
+ * the optional `onLarge` callback is told, so the server can say it out loud and
+ * archiving becomes a decision someone takes rather than something that happens
+ * to the data.
+ */
+export function mergeAuditLogs(incoming, existing, opts = {}) {
+  const { softLimit = AUDIT_SOFT_LIMIT, onLarge } = opts;
   const a = Array.isArray(incoming) ? incoming : [];
   const b = Array.isArray(existing) ? existing : [];
-  if (!b.length) return a.slice(0, cap);
-  if (!a.length) return b.slice(0, cap);
-  const key = (l) => JSON.stringify([l && l.timestamp, l && l.user, l && l.action, l && l.division]);
-  const seen = new Set(a.map(key));
-  const extra = b.filter((l) => !seen.has(key(l)));
-  return [...a, ...extra].slice(0, cap);
+
+  let merged;
+  if (!b.length) merged = a;
+  else if (!a.length) merged = b;
+  else {
+    const key = (l) => JSON.stringify([l && l.timestamp, l && l.user, l && l.action, l && l.division]);
+    const seen = new Set(a.map(key));
+    const extra = b.filter((l) => !seen.has(key(l)));
+    merged = extra.length ? [...a, ...extra] : a;
+  }
+
+  if (typeof onLarge === "function" && merged.length > softLimit) {
+    try { onLarge(merged.length, softLimit); } catch { /* reporting must not break the merge */ }
+  }
+  return merged;
 }
 
 const parse = (raw, fallback) => {
@@ -183,7 +214,7 @@ export function mergeBackupPayload(incomingData, existingData) {
   const incoming = incomingData || {};
   const existing = existingData || {};
   const merged = { ...existing, ...incoming };
-  const stats = { documents: 0, attachmentsPreserved: 0, documentsRecovered: 0 };
+  const stats = { documents: 0, attachmentsPreserved: 0, documentsRecovered: 0, auditEntries: 0, auditWantsArchiving: false };
 
   if (!existing.velite_documents) return { data: merged, stats };
 
@@ -214,8 +245,14 @@ export function mergeBackupPayload(incomingData, existingData) {
 
   merged.velite_documents = JSON.stringify(docs);
   merged.velite_doc_tombstones = JSON.stringify(tombs);
-  merged.velite_audit_logs = JSON.stringify(
-    mergeAuditLogs(parse(incoming.velite_audit_logs, []), parse(existing.velite_audit_logs, []))
+  // Nothing is ever dropped. The size is reported instead, so a log that has
+  // grown large enough to want archiving is a decision, not a silent deletion.
+  const audit = mergeAuditLogs(
+    parse(incoming.velite_audit_logs, []),
+    parse(existing.velite_audit_logs, []),
+    { onLarge: () => { stats.auditWantsArchiving = true; } }
   );
+  stats.auditEntries = audit.length;
+  merged.velite_audit_logs = JSON.stringify(audit);
   return { data: merged, stats };
 }
