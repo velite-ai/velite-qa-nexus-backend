@@ -1158,6 +1158,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const modal = document.getElementById("document-modal");
     document.getElementById("modal-doc-id").value = "";
     document.getElementById("modal-doc-id").disabled = false;
+    // Which document this form is editing, or null when creating. This used to
+    // be inferred from whether the ID box was disabled, which made the lock
+    // load-bearing: unlocking the box to allow renumbering would have turned
+    // every edit into a new document.
+    state.editingDocId = null;
     document.getElementById("modal-doc-title").value = "";
     document.getElementById("modal-doc-version").value = "1.0";
     document.getElementById("modal-doc-category").value = "SOP";
@@ -1190,7 +1195,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (doc) {
         document.getElementById("doc-modal-title").textContent = "Edit SOP / Document Metadata";
         document.getElementById("modal-doc-id").value = doc.id;
-        document.getElementById("modal-doc-id").disabled = true;
+        // Editable, so a wrongly numbered document can be renumbered. Changing
+        // it is a renumber, handled in saveDocument: the record moves to the new
+        // number and the old one is tombstoned so the sync cannot bring it back.
+        document.getElementById("modal-doc-id").disabled = false;
+        state.editingDocId = doc.id;
         document.getElementById("modal-doc-title").value = doc.title;
         document.getElementById("modal-doc-version").value = doc.version;
         document.getElementById("modal-doc-category").value = doc.category;
@@ -1384,15 +1393,56 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const docs = db.getDocuments();
-    const isEdit = document.getElementById("modal-doc-id").disabled;
+    const isEdit = state.editingDocId != null;
     const user = state.currentUser?.name || "Sanjiv Kumar Verma";
 
     let savedDocRef = null; // the just-saved/just-updated doc object (used for per-doc Drive write)
+
+    // ★ RENUMBER — the document ID was changed while editing.
+    //
+    // A document's number is its key everywhere: the sync merges documents by
+    // it, the per-document metadata file is doc-{id}.json, and stored
+    // attachments are named after it. So moving a record to a new number is not
+    // a field edit. Renaming it in place would leave the old number alive on
+    // Drive and on every other browser, and the next merge — which unions by
+    // id — would hand it straight back, leaving two documents where there was
+    // one. The old number has to be tombstoned, which is the same mechanism a
+    // deletion uses and the only thing the union respects.
+    //
+    // Attachments are carried over untouched. They are linked by driveFileId,
+    // not by name, so they keep working; the stored file keeps its original
+    // name, which is correct — the bytes were never re-uploaded, and the
+    // revision history records the renumber.
+    const renumberFrom = isEdit && id !== String(state.editingDocId).toUpperCase()
+      ? String(state.editingDocId) : null;
+    if (renumberFrom) {
+      const clash = docs.find(d => d && String(d.id).toUpperCase() === id);
+      if (clash) {
+        showNotification(`${id} is already used by "${clash.title}". Pick a different number.`, "danger");
+        return;
+      }
+      // The whole point of renumbering is to remove numbers that differ only by
+      // punctuation, so refuse to create another one.
+      const sameBar = (v) => String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const twin = docs.find(d => d && sameBar(d.id) === sameBar(id) && String(d.id).toUpperCase() !== String(renumberFrom).toUpperCase());
+      if (twin) {
+        showNotification(
+          `${id} is the same number as ${twin.id} once spacing and punctuation are ignored ` +
+          `("${twin.title}"). Two documents cannot share a number.`, "danger");
+        return;
+      }
+      if (!window.confirm(
+        `Renumber this document?\n\n    ${renumberFrom}\n        becomes\n    ${id}\n\n` +
+        `The file, revision history and all other details stay with it. ` +
+        `${renumberFrom} will no longer exist.`
+      )) return;
+    }
+
     if (isEdit) {
-      const idx = docs.findIndex(d => d.id === id);
+      const idx = docs.findIndex(d => d.id === (renumberFrom || id));
       if (idx !== -1) {
         const oldVer = docs[idx].version;
-        docs[idx] = { ...docs[idx], title, version, category, department, status, division, effectiveDate: effDate, renewalDate: renDate };
+        docs[idx] = { ...docs[idx], id, title, version, category, department, status, division, effectiveDate: effDate, renewalDate: renDate };
         if (wordFileObj) docs[idx].wordFile = wordFileObj;
         if (pdfFileObj) docs[idx].pdfFile = pdfFileObj;
         if (changes || oldVer !== version) {
@@ -1401,9 +1451,31 @@ document.addEventListener("DOMContentLoaded", async () => {
         // Stamp every edit, including one that adds no history entry. Changing a
         // renewal date without filling in "Changes" or bumping the version is a
         // normal correction, and it used to leave no trace the merge could see.
+        if (renumberFrom) {
+          // A change of document number is a controlled change, so it is written
+          // into the document's own history as well as the audit log.
+          docs[idx].history.unshift({
+            version, date: todayISO(), author: user,
+            changes: `Document renumbered from ${renumberFrom} to ${id}.`
+          });
+        }
         touchDoc(docs[idx]);
         savedDocRef = docs[idx];
-        db.addAuditLog(user, `Modified quality document ${id} (v${version})${wordFileObj?" + Word upload":""}${pdfFileObj?" + PDF upload":""}`, state.currentDivision);
+        if (renumberFrom) {
+          // Tombstone the old number so no copy of it can come back.
+          try {
+            _addTombstone(renumberFrom, user);
+            if (gdriveAccessToken && typeof writeTombstoneToDriveMeta === "function") {
+              writeTombstoneToDriveMeta(renumberFrom, user).catch(() => {});
+            }
+          } catch (e) { console.warn("[Velite] could not tombstone the old number:", e); }
+          db.addAuditLog(user,
+            `Document renumbered: ${renumberFrom} → ${id} ("${title}"). The file and revision ` +
+            `history moved with it; ${renumberFrom} is retired and will not be reissued.`,
+            state.currentDivision);
+        } else {
+          db.addAuditLog(user, `Modified quality document ${id} (v${version})${wordFileObj?" + Word upload":""}${pdfFileObj?" + PDF upload":""}`, state.currentDivision);
+        }
       }
     } else {
       if (docs.some(d => d.id === id)) { showNotification(`Document ID ${id} already exists. Please use a unique ID.`, "danger"); return; }
