@@ -29,11 +29,13 @@ test("the renewal date field is never disabled", () => {
   assert.ok(!/\bdisabled\b/.test(field[0]), "the renewal date must stay editable");
   assert.match(field[0], /type="date"/);
 
-  // Only the document ID is locked while editing an existing document.
+  // No field in the form is locked any more. The document ID used to be, which
+  // made renumbering impossible — see test/renumber.test.js. Changing it is now
+  // handled as a renumber rather than prevented.
   const opener = appJs.match(/window\.openDocumentModal = function[\s\S]*?\n  \};/);
   assert.ok(opener, "openDocumentModal should exist");
   const locked = [...opener[0].matchAll(/getElementById\("([^"]+)"\)\.disabled = true/g)].map((m) => m[1]);
-  assert.deepEqual(locked, ["modal-doc-id"], "nothing but the document ID should be locked");
+  assert.deepEqual(locked, [], "no field should be locked while editing");
 });
 
 test("the app declares a dark colour scheme, so native date controls are drawn for it", () => {
